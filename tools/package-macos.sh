@@ -55,10 +55,10 @@ chmod u+w "$RES"/lib/gstreamer-1.0/*.dylib "$RES/libexec/gstreamer-1.0/gst-plugi
 
 echo "==> Copiando as bibliotecas de que dependem (dylibbundler)"
 # `-p @rpath/` faz cada dependência ser referenciada como @rpath/<lib>.dylib.
-dylibbundler -of -b -cd -d "$RES/lib" -p "@rpath/" \
-    -x "$MACOS/$NAME" \
-    -x "$RES/libexec/gstreamer-1.0/gst-plugin-scanner" \
-    $(printf -- '-x %s ' "$RES"/lib/gstreamer-1.0/*.dylib) >/dev/null
+# Array, não `$(printf ...)`: o caminho do .app tem espaço ("NVR Dashboard.app").
+BUNDLE_ARGS=(-x "$MACOS/$NAME" -x "$RES/libexec/gstreamer-1.0/gst-plugin-scanner")
+for f in "$RES"/lib/gstreamer-1.0/*.dylib; do BUNDLE_ARGS+=(-x "$f"); done
+dylibbundler -of -b -cd -d "$RES/lib" -p "@rpath/" "${BUNDLE_ARGS[@]}" >/dev/null
 
 echo "==> rpaths (cada binário enxerga Resources/lib de onde está)"
 add_rpath() { install_name_tool -add_rpath "$2" "$1" 2>/dev/null || true; }
