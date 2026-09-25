@@ -9,6 +9,7 @@
 
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 
@@ -157,16 +158,19 @@ impl Store {
             devices: self.devices.clone(),
         })?;
         let tmp = self.path.with_extension("toml.tmp");
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        // Só o dono lê o arquivo (guarda senhas). No Windows a pasta do usuário
+        // já é privada; o modo Unix não existe lá.
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options
             .open(&tmp)
             .with_context(|| format!("gravando {}", tmp.display()))?;
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         // `mode` só vale na criação; garante 600 mesmo se o tmp já existia.
+        #[cfg(unix)]
         fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
         fs::rename(&tmp, &self.path)?;
         Ok(())
@@ -332,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn grava_com_permissao_600_e_le_de_volta() {
+    fn grava_e_le_de_volta_com_permissao_600_no_unix() {
         let dir = tempdir();
         let mut s = store(&dir);
         s.add(device("10.0.0.5", &[1, 2])).unwrap();

@@ -626,8 +626,18 @@ fn attach_motion_branch(
 // Seleção de decodificador
 // ---------------------------------------------------------------------------
 
-/// Plugins cujos elementos `*dec` fazem decodificação acelerada por hardware.
-const HARDWARE_DECODER_PLUGINS: &[&str] = &["va", "nvcodec", "vaapi", "msdk"];
+/// Plugins cujos elementos `*dec` fazem decodificação acelerada por hardware:
+/// VA-API/NVDEC/MSDK (Linux e Windows), Direct3D 11/12 (Windows) e
+/// VideoToolbox (`applemedia`, macOS).
+const HARDWARE_DECODER_PLUGINS: &[&str] = &[
+    "va",
+    "nvcodec",
+    "vaapi",
+    "msdk",
+    "d3d11",
+    "d3d12",
+    "applemedia",
+];
 
 /// Ajusta o registro do GStreamer conforme a preferência do usuário.
 ///

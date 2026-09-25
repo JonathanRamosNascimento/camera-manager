@@ -1,0 +1,143 @@
+name: Build e pacotes
+
+# - a cada push/PR: verifica formatação, clippy e testes no Linux;
+# - em tag `v*` (ex.: v0.2.0): gera os instaladores de todos os sistemas e publica
+#   uma Release com eles. Também dá para disparar manualmente (Actions > Run workflow).
+on:
+  push:
+    branches: [master, main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------- Linux: testes
+  test-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependências do sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config \
+            libgtk-4-dev libglib2.0-dev libgraphene-1.0-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+      # O projeto exige Rust >= 1.92; o `stable` atual já atende.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --release
+
+  # ------------------------------------------------------- Linux: .deb (Ubuntu 24.04+)
+  deb:
+    needs: test-linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Instala o apt, compila o plugin gtk4paintablesink e o deixa em ~/.local/share.
+      - run: tools/setup-ubuntu.sh
+      - run: tools/build-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+
+  # ---------------------------------------------------------------------- Windows
+  windows:
+    needs: test-linux
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inno Setup (gera o instalador .exe)
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git zip base-devel
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-rust
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-gtk4
+            mingw-w64-x86_64-gstreamer
+            mingw-w64-x86_64-gst-plugins-base
+            mingw-w64-x86_64-gst-plugins-good
+            mingw-w64-x86_64-gst-plugins-bad
+            mingw-w64-x86_64-gst-plugins-ugly
+            mingw-w64-x86_64-gst-libav
+            mingw-w64-x86_64-adwaita-icon-theme
+      - name: Versões
+        shell: msys2 {0}
+        run: |
+          rustc --version
+          pkg-config --modversion gtk4 gstreamer-1.0
+      - name: Plugin gtk4paintablesink
+        shell: msys2 {0}
+        run: echo "GTK4_PLUGIN_DLL=$(tools/build-gtk4-plugin.sh "$PWD/gtk4-plugin")" >> "$GITHUB_ENV"
+      - name: Pacote (pasta, .zip e instalador)
+        shell: msys2 {0}
+        run: tools/package-windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/*.zip
+            dist/*-setup.exe
+
+  # ------------------------------------------------------------------------ macOS
+  macos:
+    needs: test-linux
+    # macos-latest = Apple Silicon (arm64). Para Intel, some `macos-15-intel` à matriz.
+    strategy:
+      matrix:
+        os: [macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Dependências (Homebrew)
+        run: |
+          brew update
+          brew install gtk4 gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
+            gst-plugins-ugly gst-libav dylibbundler librsvg pkg-config
+      - name: Plugin gtk4paintablesink
+        run: echo "GTK4_PLUGIN_DYLIB=$(tools/build-gtk4-plugin.sh "$PWD/gtk4-plugin")" >> "$GITHUB_ENV"
+      - name: Pacote (.app e .dmg)
+        env:
+          # Opcional: com um certificado "Developer ID Application" em segredo, o app
+          # é assinado de verdade; sem ele, usa assinatura ad-hoc.
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: tools/package-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.os }}
+          path: dist/*.dmg
+
+  # ---------------------------------------------------------------------- Release
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [deb, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Lista o que será publicado
+        run: ls -lh artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

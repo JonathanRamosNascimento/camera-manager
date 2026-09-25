@@ -15,6 +15,7 @@ use std::collections::HashSet;
 
 use gtk::gio;
 use gtk::prelude::*;
+#[cfg(target_os = "linux")]
 use ksni::TrayMethods;
 
 /// Ícone usado na bandeja e nas notificações (tema Adwaita).
@@ -125,11 +126,13 @@ pub enum TrayCommand {
     Quit,
 }
 
+#[cfg(target_os = "linux")]
 struct DashboardTray {
     summary: TraySummary,
     commands: async_channel::Sender<TrayCommand>,
 }
 
+#[cfg(target_os = "linux")]
 impl DashboardTray {
     fn send(&self, command: TrayCommand) {
         // `try_send` não bloqueia; se a UI já sumiu, não há o que fazer.
@@ -137,6 +140,7 @@ impl DashboardTray {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl ksni::Tray for DashboardTray {
     fn id(&self) -> String {
         env!("CARGO_PKG_NAME").into()
@@ -207,6 +211,7 @@ impl ksni::Tray for DashboardTray {
 ///
 /// Falhar aqui não é fatal: sem um servidor de `StatusNotifierItem` (GNOME sem
 /// a extensão AppIndicator, por exemplo) o dashboard segue funcionando normal.
+#[cfg(target_os = "linux")]
 pub fn spawn_tray(
     tokio: &tokio::runtime::Handle,
     updates: async_channel::Receiver<TraySummary>,
@@ -239,4 +244,15 @@ pub fn spawn_tray(
         handle.shutdown().await;
         tracing::debug!("serviço da bandeja encerrado");
     });
+}
+
+/// Fora do Linux não há `StatusNotifierItem`: o ícone da bandeja não existe e o
+/// resto do app (incluindo as notificações) funciona igual.
+#[cfg(not(target_os = "linux"))]
+pub fn spawn_tray(
+    _tokio: &tokio::runtime::Handle,
+    _updates: async_channel::Receiver<TraySummary>,
+    _commands: async_channel::Sender<TrayCommand>,
+) {
+    tracing::info!("ícone de bandeja indisponível neste sistema (só Linux)");
 }

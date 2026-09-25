@@ -1,6 +1,12 @@
 //! Dashboard de visualização das câmeras de um NVR iCSee/XMEye via RTSP.
 
+// No Windows, em release, roda como aplicativo de janela (sem abrir um terminal
+// junto). Efeito colateral: `--help`/`--check` não imprimem nada no console dele;
+// para diagnóstico, rode a versão de desenvolvimento ou consulte o log.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod audio;
+mod bundle;
 mod camera;
 mod config;
 mod discovery;
@@ -38,11 +44,15 @@ AJUSTES (cameras.toml, opcional) — procurado nesta ordem:
     --config <ARQUIVO>
     $NVR_DASHBOARD_CONFIG
     ./config/cameras.toml
-    $XDG_CONFIG_HOME/nvr-dashboard/cameras.toml
+    <pasta de config>/nvr-dashboard/cameras.toml
 
 CÂMERAS: cadastradas pela própria janela (manualmente ou escaneando a rede) e
-guardadas em $XDG_CONFIG_HOME/nvr-dashboard/devices.toml (ou em
+guardadas em <pasta de config>/nvr-dashboard/devices.toml (ou em
 $NVR_DASHBOARD_DEVICES, se definido).
+
+<pasta de config>:  Linux    $XDG_CONFIG_HOME ou ~/.config
+                    macOS    ~/Library/Application Support
+                    Windows  %APPDATA%
 
 ATALHOS NA JANELA:
     Clique / Enter   Abre a câmera em foco em tela cheia
@@ -111,6 +121,9 @@ fn init_tracing() {
 }
 
 fn main() -> Result<()> {
+    // Em pacotes com GStreamer/GTK embutidos (Windows, macOS), aponta o ambiente
+    // para eles antes de tudo. Sem pacote, não faz nada.
+    bundle::configure();
     init_tracing();
 
     let Some(args) = parse_args()? else {

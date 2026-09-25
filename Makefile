@@ -26,7 +26,7 @@ REAL_HOME := $(shell getent passwd $(REAL_USER) | cut -d: -f6)
 AS_USER   := $(if $(filter 0,$(IS_ROOT)),$(if $(SUDO_USER),sudo -u $(SUDO_USER) -H,),)
 USER_CONFIG := $(REAL_HOME)/.config/$(BIN)/cameras.toml
 
-.PHONY: all build test check lint install uninstall user-config clean
+.PHONY: all build test check lint install uninstall user-config clean deb
 
 all: build
 
@@ -72,6 +72,10 @@ uninstall:
 	@echo
 	@echo "Removido. Seus dados foram mantidos (câmeras, layout, ajustes)."
 	@echo "Para apagá-los também:  rm -r $(REAL_HOME)/.config/$(BIN)"
+
+# Gera o .deb em dist/ (Debian/Ubuntu; rode antes tools/setup-ubuntu.sh).
+deb:
+	tools/build-deb.sh
 
 clean:
 	cargo clean

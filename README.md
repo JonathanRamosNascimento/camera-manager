@@ -6,6 +6,9 @@ RTSP. As câmeras são cadastradas pela própria janela — manualmente ou
 **escaneando a rede** — e o app cuida de reconexão automática, captura de tela,
 gravação sob demanda, áudio, detecção de movimento e ícone na bandeja.
 
+**Roda em Linux, Windows e macOS**, com instaladores para cada um — veja
+[Instalação](#instalação).
+
 ![Grid com três câmeras ao vivo](docs/screenshot.png)
 
 _Imagens deste README usam vídeo sintético (padrões de teste do GStreamer
@@ -29,8 +32,8 @@ rustup default stable
 cargo run --release
 ```
 
-_(Arch/CachyOS. No **Ubuntu 24.04**, rode antes `tools/setup-ubuntu.sh` — veja
-[Ubuntu 24.04 e Debian](#ubuntu-2404-e-debian).)_
+_(Arch/CachyOS. Para **Ubuntu, Windows, macOS** e outras distros, com instaladores
+prontos, veja [Instalação](#instalação).)_
 
 1. O app abre **sem câmeras**, com o botão **Escanear a rede** (e **Adicionar
    manualmente**).
@@ -46,7 +49,6 @@ Tudo isso é salvo entre execuções. Detalhes nas seções abaixo.
 ## Sumário
 
 - [Recursos](#recursos)
-- [Requisitos](#requisitos)
 - [Instalação](#instalação)
 - [Configuração](#configuração)
 - [Uso](#uso)
@@ -105,40 +107,56 @@ Tudo isso é salvo entre execuções. Detalhes nas seções abaixo.
 
 ---
 
-## Requisitos
+## Instalação
 
-Tudo vem dos repositórios oficiais do Arch/CachyOS:
+Escolha o seu sistema:
+
+| Sistema | Instalador | Como instalar | Situação |
+|---|---|---|---|
+| **Arch, CachyOS, Manjaro** | `PKGBUILD` | `cd packaging/arch && makepkg -si` | testado num contêiner Arch Linux |
+| **Ubuntu 24.04+ e derivados** (Mint, Pop!_OS, Debian recente) | `.deb` | `sudo apt install ./nvr-dashboard_0.1.0_amd64.deb` | testado num Ubuntu 24.04.5 limpo |
+| **Fedora, openSUSE e outras** | do código-fonte | [veja abaixo](#fedora-opensuse-e-outras-distros) | **não testado** |
+| **Windows 10/11 (x64)** | `…-windows-x64-setup.exe` ou `.zip` | duplo clique | gerado pelo CI; **não testado por mim** |
+| **macOS 13+** (Apple Silicon) | `….dmg` | arrastar para Aplicativos | gerado pelo CI; **não testado por mim** |
+
+**Onde baixar os instaladores prontos:** na página de *Releases* do repositório
+(cada tag `vX.Y.Z` publica todos eles). Se ainda não houver release, veja
+[Gerando os instaladores](#gerando-os-instaladores) para produzi-los.
+
+> **Sobre o "não testado":** os instaladores de Windows e macOS só podem ser gerados
+> nesses sistemas, e o desenvolvimento foi feito em Linux. Os scripts e o CI
+> (`.github/workflows/build.yml`) foram escritos com cuidado, mas **nunca foram
+> executados**: é esperado que a primeira execução do CI precise de ajustes.
+> Linux (`.deb` e Arch) foi testado de ponta a ponta.
+
+### Arch, CachyOS, Manjaro
 
 ```sh
-sudo pacman -S --needed rustup gtk4 gstreamer gst-plugins-base gst-plugins-good \
-                        gst-plugins-bad gst-plugins-ugly gst-libav gst-plugin-gtk4
-rustup default stable
+cd packaging/arch
+makepkg -si          # compila, gera o pacote e instala (resolve as dependências)
 ```
 
-| Componente | Para quê | Obrigatório |
-|---|---|---|
-| `gtk4` ≥ 4.12 | interface | sim |
-| `gstreamer` + `plugins-base/good` | RTSP, decodificação, gravação | sim |
-| `gst-plugin-gtk4` | elemento `gtk4paintablesink` | sim |
-| `gst-libav` | decoders de software (`avdec_h264`, `avdec_h265`) | sim |
-| `gst-plugin-pipewire` ou `gst-plugins-good` (Pulse) | saída de som (`autoaudiosink`) | só para o áudio |
-| `gst-plugin-va` / `nvcodec` | decodificação por hardware (opcional, ver [Problemas conhecidos](#problemas-conhecidos)) | não |
-| Extensão GNOME AppIndicator | ícone na bandeja | não |
-| `python3` | só o servidor RTSP de teste em `tools/` | não |
+Remover: `sudo pacman -R nvr-dashboard`. Alternativa sem pacote:
+`sudo make install` / `sudo make uninstall` (veja [Do código-fonte](#do-código-fonte-todos-os-sistemas)).
 
-Verifique o ambiente sem compilar nada:
+Dependências (o `makepkg` instala sozinho): `gtk4 gstreamer gst-plugins-base
+gst-plugins-good gst-plugins-bad gst-libav gst-plugin-gtk4`. Opcionais:
+`gst-plugin-pipewire` (áudio), `gst-plugins-ugly`, `gst-plugin-va` / `gst-plugin-nvcodec`
+(decodificação por hardware).
+
+### Ubuntu 24.04+ e Debian
 
 ```sh
-gst-inspect-1.0 gtk4paintablesink rtspsrc splitmuxsink parsebin >/dev/null && echo ok
+sudo apt install ./nvr-dashboard_0.1.0_amd64.deb     # instala e resolve as dependências
+sudo apt remove nvr-dashboard                        # remove
 ```
 
-> **Usa Ubuntu/Debian?** Veja [Ubuntu 24.04 e Debian](#ubuntu-2404-e-debian): lá o
-> `gtk4paintablesink` não vem em pacote e o Rust do `apt` é antigo demais, mas há um
-> script que resolve os dois.
+O `.deb` já leva o plugin `gtk4paintablesink` dentro dele (o Ubuntu 24.04 não o
+empacota), então **não é preciso compilar nada**. Abre pelo menu ("NVR Dashboard") ou
+por `nvr-dashboard`. Para gerar o `.deb` você mesmo, veja
+[Gerando os instaladores](#gerando-os-instaladores).
 
-### Ubuntu 24.04 e Debian
-
-O comando `pacman` acima é do Arch. No Ubuntu 24.04 LTS há dois obstáculos, e **a
+**Por que não basta um `apt install`?** No Ubuntu 24.04 há dois obstáculos, e **a
 versão do GStreamer não é um deles**:
 
 | Item | Ubuntu 24.04 | O projeto precisa | Solução |
@@ -152,7 +170,7 @@ versão do GStreamer não é um deles**:
 > compilam contra 1.14 ou mais nova e só liberam recursos extras quando a versão
 > instalada permite. O que barra o Ubuntu 24.04 são o Rust antigo e o plugin.
 
-**Caminho suportado: o script.** Como usuário comum (ele pede `sudo` só para o `apt`):
+**Compilar você mesmo no Ubuntu:** o script prepara tudo (pede `sudo` só para o `apt`):
 
 ```sh
 tools/setup-ubuntu.sh          # apt + rustup + plugin gtk4paintablesink (alguns minutos)
@@ -163,13 +181,13 @@ O script: (1) instala as dependências com `apt`; (2) instala o Rust via `rustup
 o que houver for anterior a 1.92; (3) compila **só** o `gst-plugin-gtk4` do
 [`gst-plugins-rs`](https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs) na
 versão feita para o GStreamer 1.24 (branch `0.13`) e o instala em
-`~/.local/share/gstreamer-1.0/plugins`, onde o GStreamer procura sozinho, sem
-variável de ambiente; (4) confere `gtk4paintablesink`, `rtspsrc`, `splitmuxsink` e
-`parsebin`. É idempotente: se o elemento já existir, não recompila. Para usar
-outra versão do plugin: `GST_PLUGINS_RS_REF=<branch-ou-tag> tools/setup-ubuntu.sh`;
-se você já instalou as dependências do `apt`, `NO_APT=1 tools/setup-ubuntu.sh`.
+`~/.local/share/gstreamer-1.0/plugins`, onde o GStreamer procura sozinho; (4) confere
+`gtk4paintablesink`, `rtspsrc`, `splitmuxsink` e `parsebin`. É idempotente: se o
+elemento já existir, não recompila. Variáveis: `GST_PLUGINS_RS_REF=<branch-ou-tag>`
+para outra versão do plugin, `NO_APT=1` se você já instalou as dependências.
 
-**Passo a passo manual** (o que o script faz):
+<details>
+<summary>Passo a passo manual (o que o script faz)</summary>
 
 ```sh
 sudo apt-get install -y build-essential pkg-config curl git ca-certificates \
@@ -191,61 +209,177 @@ install -m755 gst-plugins-rs/target/release/libgstgtk4.so ~/.local/share/gstream
 gst-inspect-1.0 gtk4paintablesink            # deve listar o elemento
 cargo build --release && ./target/release/nvr-dashboard
 ```
+</details>
 
-**O que foi testado:** num Ubuntu 24.04.5 limpo (contêiner, usuário comum com
-`sudo`), o script, a compilação do app contra o GStreamer 1.24.2, `sudo make
-install` (o `target/` fica do seu usuário), `nvr-dashboard --check`, o app
-conectando a câmeras RTSP de teste com os quadros chegando ao
-`gtk4paintablesink`, e `sudo make uninstall`. **Não foi testado** em sessão
-gráfica real do Ubuntu (GNOME/Wayland), decodificação por hardware, áudio nem
-bandeja. Se algo falhar aí, abra uma issue com a saída de
-`gst-inspect-1.0 --version` e `RUST_LOG=nvr_dashboard=debug nvr-dashboard`.
+**O que foi testado (Ubuntu 24.04.5 limpo, num contêiner):** o script, a compilação
+contra o GStreamer 1.24.2, `sudo make install` (o `target/` fica do seu usuário),
+`nvr-dashboard --check`, **o `.deb` instalado num sistema virgem** (só com
+`apt install ./…deb`), o app conectando a câmeras RTSP de teste com os quadros
+chegando ao `gtk4paintablesink`, e a remoção. **Não foi testado** em sessão gráfica
+real do Ubuntu (GNOME/Wayland), nem decodificação por hardware, áudio ou bandeja.
+Debian **não foi testado** (a lógica é a mesma; se a sua versão já tiver o pacote
+`gstreamer1.0-gtk4`, o script pula a compilação do plugin).
 
-Debian **não foi testado**. A lógica é a mesma (Rust novo e o plugin), e se a sua
-versão já trouxer o pacote `gstreamer1.0-gtk4`, o script detecta o elemento e pula
-a compilação do plugin.
+### Fedora, openSUSE e outras distros
 
----
+Não há pacote pronto. Compile do código-fonte ([abaixo](#do-código-fonte-todos-os-sistemas)):
+você precisa de Rust ≥ 1.92 (via `rustup`), dos pacotes de desenvolvimento do GTK4
+(≥ 4.12) e do GStreamer, dos plugins `base`, `good`, `bad` e `libav`, e do plugin
+`gtk4paintablesink`. Confira se a sua distro já o tem:
 
-## Instalação
+```sh
+gst-inspect-1.0 gtk4paintablesink     # se listar o elemento, não precisa compilar o plugin
+```
 
-**Rodando do diretório do projeto:**
+Se não tiver, `tools/build-gtk4-plugin.sh` o compila na versão certa para o seu
+GStreamer (escolhe o ramo do `gst-plugins-rs` pela versão instalada); instale o
+resultado em `~/.local/share/gstreamer-1.0/plugins/`. Nomes de pacote aproximados
+(**não testados**): Fedora `gtk4-devel gstreamer1-devel
+gstreamer1-plugins-base-devel gstreamer1-plugins-good gstreamer1-plugins-bad-free
+gstreamer1-libav` (o `libav` vem do RPM Fusion); openSUSE `gtk4-devel
+gstreamer-devel gstreamer-plugins-base-devel gstreamer-plugins-good
+gstreamer-plugins-bad gstreamer-plugins-libav`.
+
+### Windows
+
+**Instalador (recomendado):** baixe `nvr-dashboard-<versão>-windows-x64-setup.exe` e
+execute. Instala só para o seu usuário (não pede administrador), cria o atalho no
+Menu Iniciar (e, se quiser, na Área de Trabalho) e aparece em *Configurações →
+Aplicativos* para desinstalar. **Portátil:** extraia o `.zip` e rode
+`nvr-dashboard.exe`; nada é instalado.
+
+- O instalador **não é assinado**: o Windows pode mostrar *"O Windows protegeu o seu
+  PC"* (SmartScreen). Clique em **Mais informações → Executar assim mesmo**.
+- Seus dados ficam em `%APPDATA%\nvr-dashboard` e **não** são apagados ao desinstalar.
+- Diferenças do Linux: **sem ícone de bandeja**; o app não abre janela de terminal,
+  então `--help`/`--check` e o log não aparecem (use o Linux ou uma build de
+  desenvolvimento para diagnóstico); a decodificação por hardware usa Direct3D
+  (`d3d11`) em vez de VA-API.
+- O Firewall do Windows pode perguntar se permite o app ao usar transporte UDP
+  (`rtsp_protocols = "udp"`); o padrão TCP não pergunta.
+
+Compilar no Windows: instale o [MSYS2](https://www.msys2.org), abra o terminal
+**MSYS2 MINGW64** e rode (pacotes do GTK4/GStreamer, Rust do próprio MSYS2):
+
+```sh
+pacman -S --needed git zip base-devel mingw-w64-x86_64-{toolchain,rust,pkgconf,gtk4,gstreamer,\
+gst-plugins-base,gst-plugins-good,gst-plugins-bad,gst-plugins-ugly,gst-libav,adwaita-icon-theme}
+export GTK4_PLUGIN_DLL="$(tools/build-gtk4-plugin.sh "$PWD/gtk4-plugin")"
+tools/package-windows.sh          # gera dist/…-windows-x64.zip (+ setup.exe se tiver o Inno Setup)
+```
+
+### macOS
+
+**Instalador:** abra o `.dmg` e arraste **NVR Dashboard** para *Aplicativos*.
+
+- O app **não é assinado por um desenvolvedor Apple** (só assinatura ad-hoc): na
+  primeira vez, clique com o **botão direito → Abrir** (ou rode
+  `xattr -dr com.apple.quarantine "/Applications/NVR Dashboard.app"`). Assinar e
+  notarizar exige uma conta paga da Apple; o CI usa o certificado se você colocar o
+  segredo `MACOS_SIGN_IDENTITY` (veja [Gerando os instaladores](#gerando-os-instaladores)).
+- Ao escanear a rede, o macOS pergunta se o app pode acessar **a rede local**: permita.
+- Seus dados ficam em `~/Library/Application Support/nvr-dashboard`.
+- Diferenças do Linux: **sem ícone de bandeja**; a decodificação por hardware usa o
+  VideoToolbox (`applemedia`).
+
+Compilar no macOS (Homebrew):
+
+```sh
+brew install gtk4 gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
+             gst-plugins-ugly gst-libav dylibbundler librsvg pkg-config rustup
+export GTK4_PLUGIN_DYLIB="$(tools/build-gtk4-plugin.sh "$PWD/gtk4-plugin")"
+tools/package-macos.sh            # gera dist/NVR Dashboard.app e o .dmg
+```
+
+### Do código-fonte (todos os sistemas)
+
+Requisitos: **Rust ≥ 1.92** (`rustup default stable`), **GTK4 ≥ 4.12** e
+**GStreamer ≥ 1.14** (com `gst-plugins-base/good/bad` e `gst-libav`), e o elemento
+`gtk4paintablesink` (pacote `gst-plugin-gtk4` no Arch; nas demais, veja acima).
 
 ```sh
 cargo build --release
 ./target/release/nvr-dashboard
+
+sudo make install      # Linux: compila e instala binário, .desktop e ícone (PREFIX=/usr/local)
+sudo make uninstall    # remove
 ```
 
-**Instalando no sistema** (binário, `.desktop` e ícone):
+| Componente | Para quê | Obrigatório |
+|---|---|---|
+| `gtk4` ≥ 4.12 | interface | sim |
+| `gstreamer` + `plugins-base/good` | RTSP, decodificação, gravação | sim |
+| `gtk4paintablesink` | exibição do vídeo | sim |
+| `gst-libav` | decoders de software (`avdec_h264`, `avdec_h265`) | sim |
+| `gst-plugin-pipewire` ou Pulse | saída de som (`autoaudiosink`) | só para o áudio |
+| `gst-plugin-va` / `nvcodec` (Linux) | decodificação por hardware | não |
+| Extensão GNOME AppIndicator | ícone na bandeja (só Linux) | não |
+| `python3` | só o servidor RTSP de teste em `tools/` | não |
+
+Verifique o ambiente sem compilar nada:
 
 ```sh
-sudo make install      # compila e instala (PREFIX=/usr/local por padrão)
-sudo make uninstall    # remove o que foi instalado
+gst-inspect-1.0 gtk4paintablesink rtspsrc splitmuxsink parsebin >/dev/null && echo ok
 ```
 
-Só isso. Depois de instalar, o app aparece no menu do GNOME como **NVR Dashboard**
-e também abre pelo terminal com `nvr-dashboard` (`/usr/local/bin` costuma estar no
-`PATH`). Na primeira execução ele abre sem câmeras: cadastre-as pela janela.
+Detalhes do `sudo make install` (Linux):
 
 - **Compila como o seu usuário.** Sob `sudo`, o `make` executa o `cargo` como quem
   chamou o `sudo` (`$SUDO_USER`), não como root — o root não tem o Rust do `rustup`
   configurado, e compilar como root deixaria o `target/` dele. Se o `rustup` do seu
   usuário ainda não tem toolchain, rode `rustup default stable` uma vez.
 - **Compilar sem instalar:** `make` (ou `cargo build --release`).
-- **Outro prefixo:** `sudo make install PREFIX=/usr` (ex.: para empacotar, use
-  também `DESTDIR=/caminho/temporario`).
-- **`sudo make uninstall` mantém os seus dados** (câmeras, layout, ajustes em
-  `~/.config/nvr-dashboard`). Para apagá-los também: `rm -r ~/.config/nvr-dashboard`.
-- **Ajustes opcionais** (gravação, movimento…): `make user-config` cria
-  `~/.config/nvr-dashboard/cameras.toml` (modo 600) a partir do exemplo. Roda com ou
-  sem `sudo`; o arquivo sempre fica com o seu usuário.
+- **Outro prefixo:** `sudo make install PREFIX=/usr` (para empacotar, use também
+  `DESTDIR=/caminho/temporario`).
+- **`sudo make uninstall` mantém os seus dados**; para apagá-los também, veja a tabela abaixo.
+- **Ajustes opcionais:** `make user-config` cria o `cameras.toml` (modo 600) a partir do exemplo.
+
+### Onde ficam os seus dados
+
+| Sistema | Pasta | Como apagar tudo |
+|---|---|---|
+| Linux | `~/.config/nvr-dashboard` (respeita `$XDG_CONFIG_HOME`) | `rm -r ~/.config/nvr-dashboard` |
+| macOS | `~/Library/Application Support/nvr-dashboard` | `rm -r ~/Library/Application\ Support/nvr-dashboard` |
+| Windows | `%APPDATA%\nvr-dashboard` | apague a pasta no Explorer |
+
+Desinstalar o programa **não** apaga essa pasta (câmeras, layout, ajustes): assim uma
+reinstalação ou atualização mantém tudo.
+
+### Gerando os instaladores
+
+**Todos de uma vez, pelo CI (recomendado):** o workflow `.github/workflows/build.yml`
+roda em cada push (formatação, clippy e testes) e, ao empurrar uma tag, gera e publica
+os instaladores de todos os sistemas numa Release:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0      # gera .deb, Windows (.exe/.zip) e macOS (.dmg)
+```
+
+Segredo opcional `MACOS_SIGN_IDENTITY` (repositório → *Settings → Secrets*): identidade
+`Developer ID Application: …` para assinar o app do macOS de verdade.
+
+**Localmente** (cada um só roda no seu sistema):
+
+| Alvo | Comando | Onde roda |
+|---|---|---|
+| `.deb` | `tools/setup-ubuntu.sh && tools/build-deb.sh` | Ubuntu/Debian (gera em `dist/`) |
+| Arch | `cd packaging/arch && makepkg -s` | Arch Linux |
+| Windows | `GTK4_PLUGIN_DLL=… tools/package-windows.sh` | MSYS2 MINGW64 no Windows |
+| macOS | `GTK4_PLUGIN_DYLIB=… tools/package-macos.sh` | macOS |
+
+Os pacotes de Windows e macOS levam o GTK4 e o GStreamer **dentro** (a pasta tem
+algumas centenas de MB). O app se autoconfigura ao achar `lib/gstreamer-1.0` ao lado
+do executável (`src/bundle.rs`), sem script de lançamento.
 
 ---
 
 ## Configuração
 
-Há arquivos com papéis diferentes, todos em `~/.config/nvr-dashboard/`
-(respeita `$XDG_CONFIG_HOME`):
+Há arquivos com papéis diferentes, todos na pasta de dados do app
+(`~/.config/nvr-dashboard/` no Linux, `~/Library/Application Support/nvr-dashboard/`
+no macOS, `%APPDATA%\nvr-dashboard\` no Windows — veja
+[Onde ficam os seus dados](#onde-ficam-os-seus-dados); no Linux respeita
+`$XDG_CONFIG_HOME`):
 
 | Arquivo | O que guarda | Quem edita |
 |---|---|---|
@@ -460,6 +594,7 @@ voltar, retorna à qualidade escolhida.
 ```
 src/
 ├── main.rs         CLI, tracing, runtime do tokio, modo --check
+├── bundle.rs       autoconfiguração de pacotes com GStreamer/GTK embutidos (Windows, macOS)
 ├── config.rs       ajustes (TOML) + Secret (senha nunca vaza em Debug)
 ├── store.rs        cadastro de dispositivos/canais (devices.toml, modo 600)
 ├── camera.rs       UrlTemplate, Camera, Quality, Redactor de logs
@@ -480,8 +615,18 @@ src/
     ├── snapshot.rs    captura PNG via renderer do GTK
     └── style.css      tema escuro
 tools/
-├── fake_rtsp.py      servidor RTSP de teste (padrões do GStreamer)
-└── setup-ubuntu.sh   prepara o Ubuntu 24.04: apt + Rust novo + plugin gtk4paintablesink
+├── fake_rtsp.py          servidor RTSP de teste (padrões do GStreamer)
+├── setup-ubuntu.sh       prepara o Ubuntu 24.04: apt + Rust novo + plugin gtk4paintablesink
+├── build-gtk4-plugin.sh  compila o gtk4paintablesink na versão do GStreamer instalado
+├── build-deb.sh          gera o .deb (Debian/Ubuntu)
+├── package-windows.sh    gera a pasta autocontida, o .zip e o instalador (MSYS2)
+└── package-macos.sh      gera o .app e o .dmg
+packaging/
+├── arch/PKGBUILD                     pacote do Arch
+├── windows/nvr-dashboard.iss         script do instalador (Inno Setup)
+├── macos/Info.plist.in               Info.plist do .app
+└── io.github.nvrdashboard.*          .desktop e ícone (Linux)
+.github/workflows/build.yml           CI: testes e instaladores de todos os sistemas
 ```
 
 ### Pipeline por câmera
@@ -651,6 +796,11 @@ antes de concluir que a câmera está fora.
   protocolo DVRIP, que o app não implementa. O NVR informa suportar fala para as
   câmeras, então é uma evolução possível.
 
+### Ícone na bandeja: só no Linux
+
+No Windows e no macOS não há ícone de bandeja (a implementação usa D-Bus/
+`StatusNotifierItem`); o resto do app, inclusive as notificações, funciona igual.
+
 ### Ícone na bandeja no GNOME
 
 O GNOME não implementa `StatusNotifierItem` nativamente. Sem a extensão
@@ -703,7 +853,7 @@ gst-launch-1.0 rtspsrc location="rtsp://…" latency=200 ! decodebin ! autovideo
 ## Desenvolvimento
 
 ```sh
-cargo test                                  # 65 testes unitários (+1 manual, ignorado)
+cargo test                                  # 70 testes unitários (+1 manual, ignorado)
 cargo clippy --all-targets -- -D warnings
 cargo fmt
 make lint                                   # atalho para o clippy acima
@@ -737,6 +887,15 @@ tools/fake_rtsp.py &
 ```
 
 É o que gera as imagens deste README.
+
+### Integração contínua e pacotes
+
+`.github/workflows/build.yml` roda `cargo fmt --check`, `clippy` e os testes a cada
+push e pull request; em tag `v*` gera os instaladores (`.deb`, Windows, macOS) e os
+publica numa Release. O código específico de cada sistema é isolado com `cfg`
+(permissões Unix, ícone de bandeja só no Linux, pastas de dados por sistema), e as
+partes de empacotamento (`bundle.rs`) têm testes que rodam no Linux. **O build
+para Windows e macOS só é exercitado no CI desses sistemas.**
 
 ### Testar a interface sem tela
 

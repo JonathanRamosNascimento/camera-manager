@@ -7,6 +7,7 @@
 
 use std::fmt;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -444,19 +445,35 @@ fn expand_tilde(raw: &str) -> PathBuf {
 }
 
 fn home_dir() -> String {
-    std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
+    glib::home_dir().to_string_lossy().into_owned()
 }
 
+/// Pasta base de configuração do usuário, por sistema:
+/// - Linux: `$XDG_CONFIG_HOME` ou `~/.config`;
+/// - macOS: `$XDG_CONFIG_HOME` (se definido) ou `~/Library/Application Support`;
+/// - Windows: `%APPDATA%` (normalmente `C:\Users\<você>\AppData\Roaming`).
+///
+/// O app grava em `<base>/nvr-dashboard/`.
 pub(crate) fn user_config_dir() -> Option<PathBuf> {
-    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
-        return Some(PathBuf::from(xdg));
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+            return Some(PathBuf::from(xdg));
+        }
+        return Some(glib::home_dir().join("Library").join("Application Support"));
     }
-    std::env::var_os("HOME")
-        .filter(|v| !v.is_empty())
-        .map(|home| PathBuf::from(home).join(".config"))
+    #[cfg(not(target_os = "macos"))]
+    {
+        // No Unix o GLib já segue o XDG; no Windows devolve `%APPDATA%`.
+        Some(glib::user_config_dir())
+    }
 }
 
 /// Avisa se o arquivo de credenciais for legível/gravável por grupo ou outros.
+///
+/// Só faz sentido em Unix (modo `rwx`); no Windows as permissões vêm da ACL da
+/// pasta do usuário, que já é privada por padrão.
+#[cfg(unix)]
 fn warn_on_loose_permissions(path: &Path) {
     let Ok(metadata) = fs::metadata(path) else {
         return;
@@ -472,9 +489,8 @@ fn warn_on_loose_permissions(path: &Path) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Testes
-// ---------------------------------------------------------------------------
+#[cfg(not(unix))]
+fn warn_on_loose_permissions(_path: &Path) {}
 
 #[cfg(test)]
 mod tests {
@@ -612,7 +628,7 @@ mod tests {
 
     #[test]
     fn expande_til_no_diretorio() {
-        let home = std::env::var("HOME").unwrap();
+        let home = home_dir();
         assert_eq!(expand_tilde("~/x/y"), PathBuf::from(&home).join("x/y"));
         assert_eq!(expand_tilde("~"), PathBuf::from(&home));
         assert_eq!(expand_tilde("/abs/oluto"), PathBuf::from("/abs/oluto"));

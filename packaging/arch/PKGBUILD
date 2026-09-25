@@ -1,0 +1,47 @@
+# Maintainer: nvr-dashboard
+#
+# Compila e empacota o projeto A PARTIR DA ÁRVORE LOCAL (não baixa nada):
+#
+#     cd packaging/arch
+#     makepkg -si            # compila, gera o pacote e instala com o pacman
+#
+# Desinstalar: sudo pacman -R nvr-dashboard
+pkgname=nvr-dashboard
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Dashboard de câmeras RTSP (NVR iCSee/XMEye e câmeras IP)'
+arch=('x86_64' 'aarch64')
+url='https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs'
+license=('custom')
+depends=('gtk4' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-plugins-bad'
+         'gst-libav' 'gst-plugin-gtk4')
+makedepends=('cargo' 'pkgconf')
+optdepends=('gst-plugin-pipewire: áudio via PipeWire'
+            'gst-plugins-ugly: decoders extras'
+            'gst-plugin-va: decodificação por hardware (VA-API)'
+            'gst-plugin-nvcodec: decodificação por hardware (NVIDIA)')
+# Sem `source`: usa a árvore do projeto (dois níveis acima deste arquivo).
+_root="$startdir/../.."
+
+pkgver() {
+    sed -n 's/^version = "\(.*\)"/\1/p' "$_root/Cargo.toml" | head -n1
+}
+
+build() {
+    cd "$_root"
+    # `--locked` garante as versões do Cargo.lock; o alvo fica em $srcdir para não
+    # sujar o repositório.
+    CARGO_TARGET_DIR="$srcdir/target" cargo build --release --locked
+}
+
+package() {
+    cd "$_root"
+    install -Dm755 "$srcdir/target/release/nvr-dashboard" "$pkgdir/usr/bin/nvr-dashboard"
+    install -Dm644 packaging/io.github.nvrdashboard.NvrDashboard.desktop \
+        "$pkgdir/usr/share/applications/io.github.nvrdashboard.NvrDashboard.desktop"
+    install -Dm644 packaging/io.github.nvrdashboard.NvrDashboard.svg \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.nvrdashboard.NvrDashboard.svg"
+    install -Dm644 config/cameras.example.toml \
+        "$pkgdir/usr/share/nvr-dashboard/cameras.example.toml"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/nvr-dashboard/README.md"
+}

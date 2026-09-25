@@ -7,3 +7,9 @@
 
 # Capturas geradas em runtime
 /snapshots/
+
+# Pacotes gerados (deb, dmg, zip, instaladores)
+/dist/
+/packaging/arch/src/
+/packaging/arch/pkg/
+/packaging/arch/*.pkg.tar.*
