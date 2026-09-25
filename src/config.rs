@@ -26,10 +26,14 @@ pub const MASK: &str = "***";
 pub const CONFIG_FILE_NAME: &str = "cameras.toml";
 
 /// Variável de ambiente que sobrescreve a busca por caminhos padrão.
-pub const CONFIG_ENV_VAR: &str = "NVR_DASHBOARD_CONFIG";
+pub const CONFIG_ENV_VAR: &str = "CAMERA_MANAGER_CONFIG";
+
+/// Nome antigo do app (antes de virar Camera Manager): pasta de dados e
+/// variáveis de ambiente que ainda são aceitas.
+const LEGACY_NAME: &str = "nvr-dashboard";
 
 /// Subdiretório criado dentro de Imagens/Vídeos para os arquivos gerados.
-const OUTPUT_SUBDIR: &str = "nvr-dashboard";
+const OUTPUT_SUBDIR: &str = "camera-manager";
 
 // ---------------------------------------------------------------------------
 // Secret
@@ -169,7 +173,7 @@ pub struct App {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Snapshots {
-    /// Padrão: `<Imagens>/nvr-dashboard`.
+    /// Padrão: `<Imagens>/camera-manager`.
     #[serde(default)]
     pub directory: Option<String>,
 }
@@ -178,7 +182,7 @@ pub struct Snapshots {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recording {
-    /// Padrão: `<Vídeos>/nvr-dashboard`.
+    /// Padrão: `<Vídeos>/camera-manager`.
     #[serde(default)]
     pub directory: Option<String>,
     /// Duração de cada arquivo do buffer circular.
@@ -351,8 +355,8 @@ impl Config {
     /// funciona só com o cadastro de câmeras feito pela interface.
     ///
     /// Ordem: caminho explícito (`--config`, obrigatório existir) →
-    /// `$NVR_DASHBOARD_CONFIG` → `./config/cameras.toml` →
-    /// `$XDG_CONFIG_HOME/nvr-dashboard/cameras.toml`.
+    /// `$CAMERA_MANAGER_CONFIG` → `./config/cameras.toml` →
+    /// `$XDG_CONFIG_HOME/camera-manager/cameras.toml`.
     pub fn discover(explicit: Option<PathBuf>) -> Result<(Self, Option<PathBuf>)> {
         if let Some(path) = explicit {
             if !path.is_file() {
@@ -362,7 +366,7 @@ impl Config {
         }
 
         let mut candidates = Vec::new();
-        if let Some(from_env) = std::env::var_os(CONFIG_ENV_VAR) {
+        if let Some(from_env) = env_var_or_legacy(CONFIG_ENV_VAR, "NVR_DASHBOARD_CONFIG") {
             candidates.push(PathBuf::from(from_env));
         }
         candidates.push(PathBuf::from("config").join(CONFIG_FILE_NAME));
@@ -456,7 +460,7 @@ fn home_dir() -> String {
 /// - macOS: `$XDG_CONFIG_HOME` (se definido) ou `~/Library/Application Support`;
 /// - Windows: `%APPDATA%` (normalmente `C:\Users\<você>\AppData\Roaming`).
 ///
-/// O app grava em `<base>/nvr-dashboard/`.
+/// O app grava em `<base>/camera-manager/`.
 pub(crate) fn user_config_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
@@ -469,6 +473,28 @@ pub(crate) fn user_config_dir() -> Option<PathBuf> {
     {
         // No Unix o GLib já segue o XDG; no Windows devolve `%APPDATA%`.
         Some(glib::user_config_dir())
+    }
+}
+
+/// Lê `new`; se ausente, cai no nome antigo da variável (`legacy`).
+pub(crate) fn env_var_or_legacy(new: &str, legacy: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(new).or_else(|| std::env::var_os(legacy))
+}
+
+/// Move a pasta de dados do nome antigo (`nvr-dashboard`) para `camera-manager`,
+/// uma vez: só se a nova ainda não existir. Falha em silêncio (loga) para nunca
+/// impedir o app de abrir.
+pub(crate) fn migrate_legacy_data_dir() {
+    let Some(base) = user_config_dir() else {
+        return;
+    };
+    let (old, new) = (base.join(LEGACY_NAME), base.join(OUTPUT_SUBDIR));
+    if !old.is_dir() || new.exists() {
+        return;
+    }
+    match std::fs::rename(&old, &new) {
+        Ok(()) => tracing::info!(de = %old.display(), para = %new.display(), "dados migrados do nome antigo"),
+        Err(err) => tracing::warn!(%err, de = %old.display(), "não consegui migrar os dados antigos"),
     }
 }
 

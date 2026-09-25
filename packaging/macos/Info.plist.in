@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>NVR Dashboard</string>
-    <key>CFBundleDisplayName</key><string>NVR Dashboard</string>
-    <key>CFBundleIdentifier</key><string>io.github.nvrdashboard.NvrDashboard</string>
-    <key>CFBundleExecutable</key><string>nvr-dashboard</string>
+    <key>CFBundleName</key><string>Camera Manager</string>
+    <key>CFBundleDisplayName</key><string>Camera Manager</string>
+    <key>CFBundleIdentifier</key><string>io.github.cameramanager.CameraManager</string>
+    <key>CFBundleExecutable</key><string>camera-manager</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>@VERSION@</string>
@@ -15,6 +15,6 @@
     <key>NSHighResolutionCapable</key><true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>O NVR Dashboard procura câmeras e NVRs na sua rede local.</string>
+    <string>O Camera Manager procura câmeras e NVRs na sua rede local.</string>
 </dict>
 </plist>

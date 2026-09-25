@@ -111,6 +111,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "camera-manager"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "futures-util",
+ "gstreamer",
+ "gtk4",
+ "ksni",
+ "percent-encoding",
+ "serde",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cfg-expr"
 version = "0.20.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -765,24 +783,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
-]
-
-[[package]]
-name = "nvr-dashboard"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "futures-util",
- "gstreamer",
- "gtk4",
- "ksni",
- "percent-encoding",
- "serde",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

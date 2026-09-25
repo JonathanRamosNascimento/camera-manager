@@ -147,7 +147,7 @@ impl ksni::Tray for DashboardTray {
     }
 
     fn title(&self) -> String {
-        "NVR Dashboard".into()
+        "Camera Manager".into()
     }
 
     fn icon_name(&self) -> String {
@@ -176,7 +176,7 @@ impl ksni::Tray for DashboardTray {
         }
         ksni::ToolTip {
             icon_name: ICON_NAME.into(),
-            title: "NVR Dashboard".into(),
+            title: "Camera Manager".into(),
             description,
             ..Default::default()
         }

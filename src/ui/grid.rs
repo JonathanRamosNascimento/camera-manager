@@ -205,7 +205,7 @@ struct SavedLayout {
 const LAYOUT_VERSION: u32 = 4;
 
 fn layout_path() -> Option<PathBuf> {
-    crate::config::user_config_dir().map(|dir| dir.join("nvr-dashboard").join("layout.toml"))
+    crate::config::user_config_dir().map(|dir| dir.join("camera-manager").join("layout.toml"))
 }
 
 fn load_layout() -> SavedLayout {

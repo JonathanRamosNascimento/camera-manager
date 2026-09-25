@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# nvr-dashboard — arquivo de configuração de exemplo
+# camera-manager — arquivo de configuração de exemplo
 #
 # Ajustes do app. É OPCIONAL: sem este arquivo valem os padrões abaixo.
 #
@@ -8,7 +8,7 @@
 #
 # As CÂMERAS não ficam aqui: são cadastradas pela janela do app (escanear a
 # rede ou adicionar manualmente) e guardadas em
-# ~/.config/nvr-dashboard/devices.toml. Blocos `[nvr]`, `[[nvrs]]` e
+# ~/.config/camera-manager/devices.toml. Blocos `[nvr]`, `[[nvrs]]` e
 # `[[cameras]]` de versões antigas ainda são aceitos, mas ignorados.
 #
 # `config/cameras.toml` está no .gitignore. Valide sem abrir a interface com:
@@ -78,7 +78,7 @@ substream_index = 1
 # ---------------------------------------------------------------------------
 
 [snapshots]
-# Padrão: <Imagens>/nvr-dashboard (segue o XDG do sistema).
+# Padrão: <Imagens>/camera-manager (segue o XDG do sistema).
 # directory = "~/Imagens/cameras"
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ substream_index = 1
 # ---------------------------------------------------------------------------
 
 [recording]
-# Padrão: <Vídeos>/nvr-dashboard.
+# Padrão: <Vídeos>/camera-manager.
 # directory = "~/Vídeos/cameras"
 
 # Duração de cada arquivo.

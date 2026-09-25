@@ -258,7 +258,7 @@ pub fn build(camera: &Camera, opts: &PipelineOptions) -> Result<Built> {
         .property("do-retransmission", false)
         .property(
             "user-agent",
-            concat!("nvr-dashboard/", env!("CARGO_PKG_VERSION")),
+            concat!("camera-manager/", env!("CARGO_PKG_VERSION")),
         )
         .build()
         .context("elemento `rtspsrc` indisponível (instale gst-plugins-good)")?;

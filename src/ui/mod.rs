@@ -50,7 +50,7 @@ use camera_tile::CameraTile;
 use fullscreen::FullscreenView;
 use grid::GridView;
 
-const APP_ID: &str = "io.github.nvrdashboard.NvrDashboard";
+const APP_ID: &str = "io.github.cameramanager.CameraManager";
 
 /// Por quanto tempo o selo de movimento fica aceso na view de tela cheia.
 const MOTION_BADGE_DURATION: Duration = Duration::from_secs(6);
@@ -958,10 +958,10 @@ fn build_window(app: &gtk::Application, bootstrap: &Bootstrap) -> SupervisorsDon
 
     let window = gtk::ApplicationWindow::builder()
         .application(app)
-        .title("NVR Dashboard")
+        .title("Camera Manager")
         .default_width(1280)
         .default_height(760)
-        .css_classes(["nvr-dashboard"])
+        .css_classes(["camera-manager"])
         .build();
 
     let summary = gtk::Label::builder()

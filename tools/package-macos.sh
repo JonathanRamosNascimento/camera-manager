@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Empacota o nvr-dashboard como "NVR Dashboard.app" e .dmg para macOS.
+# Empacota o camera-manager como "Camera Manager.app" e .dmg para macOS.
 #
 # Pré-requisitos (Homebrew):
 #   brew install gtk4 gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
@@ -23,8 +23,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-NAME=nvr-dashboard
-APP_NAME="NVR Dashboard"
+NAME=camera-manager
+APP_NAME="Camera Manager"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
 ARCH="$(uname -m)"                                   # arm64 ou x86_64
 BREW="$(brew --prefix)"
@@ -55,7 +55,7 @@ chmod u+w "$RES"/lib/gstreamer-1.0/*.dylib "$RES/libexec/gstreamer-1.0/gst-plugi
 
 echo "==> Copiando as bibliotecas de que dependem (dylibbundler)"
 # `-p @rpath/` faz cada dependência ser referenciada como @rpath/<lib>.dylib.
-# Array, não `$(printf ...)`: o caminho do .app tem espaço ("NVR Dashboard.app").
+# Array, não `$(printf ...)`: o caminho do .app tem espaço ("Camera Manager.app").
 BUNDLE_ARGS=(-x "$MACOS/$NAME" -x "$RES/libexec/gstreamer-1.0/gst-plugin-scanner")
 for f in "$RES"/lib/gstreamer-1.0/*.dylib; do BUNDLE_ARGS+=(-x "$f"); done
 dylibbundler -of -b -cd -d "$RES/lib" -p "@rpath/" "${BUNDLE_ARGS[@]}" >/dev/null
@@ -73,8 +73,8 @@ cp -R "$BREW/share/glib-2.0/schemas" "$RES/share/glib-2.0/"
 for theme in Adwaita hicolor; do
     [ -d "$BREW/share/icons/$theme" ] && cp -R "$BREW/share/icons/$theme" "$RES/share/icons/"
 done
-install -Dm644 packaging/io.github.nvrdashboard.NvrDashboard.svg \
-    "$RES/share/icons/hicolor/scalable/apps/io.github.nvrdashboard.NvrDashboard.svg"
+install -Dm644 packaging/io.github.cameramanager.CameraManager.svg \
+    "$RES/share/icons/hicolor/scalable/apps/io.github.cameramanager.CameraManager.svg"
 install -Dm644 config/cameras.example.toml "$RES/cameras.example.toml"
 
 echo "==> Ícone e Info.plist"
@@ -84,9 +84,9 @@ sed -e "s/@VERSION@/$VERSION/g" -e "s/@MINOS@/$MINOS/g" packaging/macos/Info.pli
 ICONSET="$(mktemp -d)/AppIcon.iconset"
 mkdir -p "$ICONSET"
 for size in 16 32 64 128 256 512; do
-    rsvg-convert -w "$size" -h "$size" packaging/io.github.nvrdashboard.NvrDashboard.svg \
+    rsvg-convert -w "$size" -h "$size" packaging/io.github.cameramanager.CameraManager.svg \
         -o "$ICONSET/icon_${size}x${size}.png"
-    rsvg-convert -w "$((size * 2))" -h "$((size * 2))" packaging/io.github.nvrdashboard.NvrDashboard.svg \
+    rsvg-convert -w "$((size * 2))" -h "$((size * 2))" packaging/io.github.cameramanager.CameraManager.svg \
         -o "$ICONSET/icon_${size}x${size}@2x.png"
 done
 iconutil -c icns "$ICONSET" -o "$RES/AppIcon.icns"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gera o pacote .deb (Debian/Ubuntu) do nvr-dashboard em dist/.
+# Gera o pacote .deb (Debian/Ubuntu) do camera-manager em dist/.
 #
 #   tools/build-deb.sh
 #
@@ -19,8 +19,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-NAME=nvr-dashboard
-APP_ID=io.github.nvrdashboard.NvrDashboard
+NAME=camera-manager
+APP_ID=io.github.cameramanager.CameraManager
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
 ARCH="$(dpkg --print-architecture)"
 LIBDIR="/usr/lib/$NAME"
@@ -73,8 +73,10 @@ Section: video
 Priority: optional
 Architecture: $ARCH
 Installed-Size: $SIZE_KB
-Maintainer: nvr-dashboard <noreply@localhost>
+Maintainer: camera-manager <noreply@localhost>
 Depends: libc6 (>= 2.35), libgtk-4-1 (>= 4.12), libglib2.0-0, libgstreamer1.0-0 (>= 1.22), libgstreamer-plugins-base1.0-0, libgraphene-1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav, gstreamer1.0-gl$DEPENDS_EXTRA
+Conflicts: nvr-dashboard
+Replaces: nvr-dashboard
 Recommends: gstreamer1.0-pulseaudio | gstreamer1.0-pipewire, gstreamer1.0-plugins-ugly
 Homepage: https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs
 Description: Dashboard de câmeras RTSP (NVR iCSee/XMEye e câmeras IP)

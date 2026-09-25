@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Empacota o nvr-dashboard para Windows (x64): pasta autocontida, .zip portátil e,
+# Empacota o camera-manager para Windows (x64): pasta autocontida, .zip portátil e,
 # se o Inno Setup estiver disponível, um instalador .exe.
 #
 # Roda no MSYS2, terminal "MSYS2 MINGW64". Pré-requisitos (pacman):
@@ -21,7 +21,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-NAME=nvr-dashboard
+NAME=camera-manager
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
 PREFIX="${MSYSTEM_PREFIX:-/mingw64}"
 OUT="$ROOT/dist"
@@ -60,8 +60,8 @@ mkdir -p "$DIST/share/icons"
 for theme in Adwaita hicolor; do
     [ -d "$PREFIX/share/icons/$theme" ] && cp -r "$PREFIX/share/icons/$theme" "$DIST/share/icons/"
 done
-install -Dm644 "packaging/io.github.nvrdashboard.NvrDashboard.svg" \
-    "$DIST/share/icons/hicolor/scalable/apps/io.github.nvrdashboard.NvrDashboard.svg"
+install -Dm644 "packaging/io.github.cameramanager.CameraManager.svg" \
+    "$DIST/share/icons/hicolor/scalable/apps/io.github.cameramanager.CameraManager.svg"
 [ -d "$PREFIX/lib/gdk-pixbuf-2.0" ] && cp -r "$PREFIX/lib/gdk-pixbuf-2.0" "$DIST/lib/"
 install -Dm644 config/cameras.example.toml "$DIST/cameras.example.toml"
 install -Dm644 README.md "$DIST/README.md"
@@ -76,7 +76,7 @@ fi
 if [ -n "$ISCC" ]; then
     echo "==> Instalador (Inno Setup)"
     MSYS2_ARG_CONV_EXCL="*" "$ISCC" "/DAppVersion=$VERSION" "/DSourceDir=$(cygpath -w "$DIST")" \
-        "/DOutputDir=$(cygpath -w "$OUT")" "$(cygpath -w "$ROOT/packaging/windows/nvr-dashboard.iss")"
+        "/DOutputDir=$(cygpath -w "$OUT")" "$(cygpath -w "$ROOT/packaging/windows/camera-manager.iss")"
 else
     echo "AVISO: Inno Setup (ISCC.exe) não encontrado; só o .zip foi gerado." >&2
 fi

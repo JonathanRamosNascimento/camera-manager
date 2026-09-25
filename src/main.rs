@@ -27,12 +27,12 @@ use crate::config::Config;
 use crate::store::Store;
 
 const HELP: &str = concat!(
-    "nvr-dashboard ",
+    "camera-manager ",
     env!("CARGO_PKG_VERSION"),
     r#" — grid de câmeras RTSP (NVR iCSee/XMEye e câmeras IP)
 
 USO:
-    nvr-dashboard [OPÇÕES]
+    camera-manager [OPÇÕES]
 
 OPÇÕES:
     -c, --config <ARQUIVO>   Caminho do TOML de configuração
@@ -42,13 +42,13 @@ OPÇÕES:
 
 AJUSTES (cameras.toml, opcional) — procurado nesta ordem:
     --config <ARQUIVO>
-    $NVR_DASHBOARD_CONFIG
+    $CAMERA_MANAGER_CONFIG
     ./config/cameras.toml
-    <pasta de config>/nvr-dashboard/cameras.toml
+    <pasta de config>/camera-manager/cameras.toml
 
 CÂMERAS: cadastradas pela própria janela (manualmente ou escaneando a rede) e
-guardadas em <pasta de config>/nvr-dashboard/devices.toml (ou em
-$NVR_DASHBOARD_DEVICES, se definido).
+guardadas em <pasta de config>/camera-manager/devices.toml (ou em
+$CAMERA_MANAGER_DEVICES, se definido).
 
 <pasta de config>:  Linux    $XDG_CONFIG_HOME ou ~/.config
                     macOS    ~/Library/Application Support
@@ -65,13 +65,13 @@ ATALHOS NA JANELA:
     Ctrl+Q           Sai
 
 VARIÁVEIS DE AMBIENTE:
-    RUST_LOG    Filtro de log (padrão: nvr_dashboard=info,warn)
+    RUST_LOG    Filtro de log (padrão: camera_manager=info,warn)
     GST_DEBUG   Verbosidade do GStreamer (ex.: rtspsrc:5)
 "#
 );
 
 /// Sobrescreve o caminho do cadastro de câmeras (útil em testes).
-const STORE_ENV_VAR: &str = "NVR_DASHBOARD_DEVICES";
+const STORE_ENV_VAR: &str = "CAMERA_MANAGER_DEVICES";
 
 /// Quanto esperar pelos supervisores no encerramento. Precisa ser maior que o
 /// `recording::STOP_TIMEOUT`, que é o pior caso de fechar um arquivo.
@@ -95,7 +95,7 @@ fn parse_args() -> Result<Option<Args>> {
                 return Ok(None);
             }
             "-V" | "--version" => {
-                println!("nvr-dashboard {}", env!("CARGO_PKG_VERSION"));
+                println!("camera-manager {}", env!("CARGO_PKG_VERSION"));
                 return Ok(None);
             }
             "--check" => args.check = true,
@@ -113,7 +113,7 @@ fn parse_args() -> Result<Option<Args>> {
 
 fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("nvr_dashboard=info,warn"));
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("camera_manager=info,warn"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
@@ -130,6 +130,7 @@ fn main() -> Result<()> {
         return Ok(());
     };
 
+    config::migrate_legacy_data_dir();
     let (config, path) = Config::discover(args.config)?;
     match &path {
         Some(path) => tracing::info!(arquivo = %path.display(), "configuração carregada"),
@@ -143,7 +144,7 @@ fn main() -> Result<()> {
         );
     }
 
-    let store_path = std::env::var_os(STORE_ENV_VAR)
+    let store_path = config::env_var_or_legacy(STORE_ENV_VAR, "NVR_DASHBOARD_DEVICES")
         .map(PathBuf::from)
         .or_else(Store::default_path)
         .context("não consegui descobrir onde guardar o cadastro de câmeras")?;

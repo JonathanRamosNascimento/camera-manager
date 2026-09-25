@@ -1,6 +1,6 @@
 //! Cadastro de dispositivos (NVRs / câmeras IP) feito pela interface.
 //!
-//! Fica em `<config>/nvr-dashboard/devices.toml`, com permissão `600` porque
+//! Fica em `<config>/camera-manager/devices.toml`, com permissão `600` porque
 //! guarda credenciais — o mesmo cuidado que o `cameras.toml` sempre teve. O
 //! `cameras.toml` passa a guardar só ajustes do app.
 //!
@@ -117,7 +117,7 @@ pub struct Store {
 
 impl Store {
     pub fn default_path() -> Option<PathBuf> {
-        crate::config::user_config_dir().map(|dir| dir.join("nvr-dashboard").join(FILE_NAME))
+        crate::config::user_config_dir().map(|dir| dir.join("camera-manager").join(FILE_NAME))
     }
 
     /// Lê o cadastro. Arquivo ausente = lista vazia (primeira execução).

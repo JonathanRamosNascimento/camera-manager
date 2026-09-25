@@ -1,12 +1,12 @@
-# Maintainer: nvr-dashboard
+# Maintainer: camera-manager
 #
 # Compila e empacota o projeto A PARTIR DA ÁRVORE LOCAL (não baixa nada):
 #
 #     cd packaging/arch
 #     makepkg -si            # compila, gera o pacote e instala com o pacman
 #
-# Desinstalar: sudo pacman -R nvr-dashboard
-pkgname=nvr-dashboard
+# Desinstalar: sudo pacman -R camera-manager
+pkgname=camera-manager
 pkgver=0.1.0
 pkgrel=1
 pkgdesc='Dashboard de câmeras RTSP (NVR iCSee/XMEye e câmeras IP)'
@@ -16,6 +16,8 @@ license=('custom')
 depends=('gtk4' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-plugins-bad'
          'gst-libav' 'gst-plugin-gtk4')
 makedepends=('cargo' 'pkgconf')
+conflicts=('nvr-dashboard')
+replaces=('nvr-dashboard')
 optdepends=('gst-plugin-pipewire: áudio via PipeWire'
             'gst-plugins-ugly: decoders extras'
             'gst-plugin-va: decodificação por hardware (VA-API)'
@@ -36,12 +38,12 @@ build() {
 
 package() {
     cd "$_root"
-    install -Dm755 "$srcdir/target/release/nvr-dashboard" "$pkgdir/usr/bin/nvr-dashboard"
-    install -Dm644 packaging/io.github.nvrdashboard.NvrDashboard.desktop \
-        "$pkgdir/usr/share/applications/io.github.nvrdashboard.NvrDashboard.desktop"
-    install -Dm644 packaging/io.github.nvrdashboard.NvrDashboard.svg \
-        "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.nvrdashboard.NvrDashboard.svg"
+    install -Dm755 "$srcdir/target/release/camera-manager" "$pkgdir/usr/bin/camera-manager"
+    install -Dm644 packaging/io.github.cameramanager.CameraManager.desktop \
+        "$pkgdir/usr/share/applications/io.github.cameramanager.CameraManager.desktop"
+    install -Dm644 packaging/io.github.cameramanager.CameraManager.svg \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.cameramanager.CameraManager.svg"
     install -Dm644 config/cameras.example.toml \
-        "$pkgdir/usr/share/nvr-dashboard/cameras.example.toml"
-    install -Dm644 README.md "$pkgdir/usr/share/doc/nvr-dashboard/README.md"
+        "$pkgdir/usr/share/camera-manager/cameras.example.toml"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/camera-manager/README.md"
 }

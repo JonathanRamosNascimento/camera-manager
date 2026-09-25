@@ -1,6 +1,6 @@
 //! Preferência de qualidade por câmera, guardada entre execuções.
 //!
-//! Arquivo: `<config>/nvr-dashboard/quality.toml`, com uma entrada por
+//! Arquivo: `<config>/camera-manager/quality.toml`, com uma entrada por
 //! `<nvr>/<canal>`. Falhas de leitura/escrita nunca são fatais.
 
 use std::collections::BTreeMap;
@@ -17,7 +17,7 @@ struct Saved {
 }
 
 fn path() -> Option<PathBuf> {
-    crate::config::user_config_dir().map(|dir| dir.join("nvr-dashboard").join("quality.toml"))
+    crate::config::user_config_dir().map(|dir| dir.join("camera-manager").join("quality.toml"))
 }
 
 pub fn load() -> BTreeMap<String, Quality> {

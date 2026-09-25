@@ -1,9 +1,9 @@
-; Instalador do NVR Dashboard para Windows (Inno Setup 6).
+; Instalador do Camera Manager para Windows (Inno Setup 6).
 ; Chamado por tools/package-windows.sh com:
 ;   /DAppVersion=0.1.0 /DSourceDir=<pasta empacotada> /DOutputDir=<destino>
 
-#define AppName "NVR Dashboard"
-#define AppExe  "nvr-dashboard.exe"
+#define AppName "Camera Manager"
+#define AppExe  "camera-manager.exe"
 
 [Setup]
 ; GUID fixo: identifica o app para atualizar/desinstalar. NÃO mude entre versões.
@@ -14,7 +14,7 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
 OutputDir={#OutputDir}
-OutputBaseFilename=nvr-dashboard-{#AppVersion}-windows-x64-setup
+OutputBaseFilename=camera-manager-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
@@ -43,5 +43,5 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 
-; Os dados do usuário (câmeras, layout) ficam em %APPDATA%\nvr-dashboard e NÃO são
+; Os dados do usuário (câmeras, layout) ficam em %APPDATA%\camera-manager e NÃO são
 ; removidos ao desinstalar, de propósito.

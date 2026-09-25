@@ -1,4 +1,4 @@
-# nvr-dashboard
+# camera-manager
 
 Dashboard nativo para Linux (Rust + GTK4 + GStreamer) que mostra ao vivo, num
 grid, as câmeras de um NVR iCSee/XMEye (firmware Hi3520) ou câmeras IP via
@@ -114,7 +114,7 @@ Escolha o seu sistema:
 | Sistema | Instalador | Como instalar | Situação |
 |---|---|---|---|
 | **Arch, CachyOS, Manjaro** | `PKGBUILD` | `cd packaging/arch && makepkg -si` | testado num contêiner Arch Linux |
-| **Ubuntu 24.04+ e derivados** (Mint, Pop!_OS, Debian recente) | `.deb` | `sudo apt install ./nvr-dashboard_0.1.0_amd64.deb` | testado num Ubuntu 24.04.5 limpo |
+| **Ubuntu 24.04+ e derivados** (Mint, Pop!_OS, Debian recente) | `.deb` | `sudo apt install ./camera-manager_0.1.0_amd64.deb` | testado num Ubuntu 24.04.5 limpo |
 | **Fedora, openSUSE e outras** | do código-fonte | [veja abaixo](#fedora-opensuse-e-outras-distros) | **não testado** |
 | **Windows 10/11 (x64)** | `…-windows-x64-setup.exe` ou `.zip` | duplo clique | gerado pelo CI; **não testado por mim** |
 | **macOS 13+** (Apple Silicon) | `….dmg` | arrastar para Aplicativos | gerado pelo CI; **não testado por mim** |
@@ -136,7 +136,7 @@ cd packaging/arch
 makepkg -si          # compila, gera o pacote e instala (resolve as dependências)
 ```
 
-Remover: `sudo pacman -R nvr-dashboard`. Alternativa sem pacote:
+Remover: `sudo pacman -R camera-manager`. Alternativa sem pacote:
 `sudo make install` / `sudo make uninstall` (veja [Do código-fonte](#do-código-fonte-todos-os-sistemas)).
 
 Dependências (o `makepkg` instala sozinho): `gtk4 gstreamer gst-plugins-base
@@ -147,13 +147,13 @@ gst-plugins-good gst-plugins-bad gst-libav gst-plugin-gtk4`. Opcionais:
 ### Ubuntu 24.04+ e Debian
 
 ```sh
-sudo apt install ./nvr-dashboard_0.1.0_amd64.deb     # instala e resolve as dependências
-sudo apt remove nvr-dashboard                        # remove
+sudo apt install ./camera-manager_0.1.0_amd64.deb     # instala e resolve as dependências
+sudo apt remove camera-manager                        # remove
 ```
 
 O `.deb` já leva o plugin `gtk4paintablesink` dentro dele (o Ubuntu 24.04 não o
-empacota), então **não é preciso compilar nada**. Abre pelo menu ("NVR Dashboard") ou
-por `nvr-dashboard`. Para gerar o `.deb` você mesmo, veja
+empacota), então **não é preciso compilar nada**. Abre pelo menu ("Camera Manager") ou
+por `camera-manager`. Para gerar o `.deb` você mesmo, veja
 [Gerando os instaladores](#gerando-os-instaladores).
 
 **Por que não basta um `apt install`?** No Ubuntu 24.04 há dois obstáculos, e **a
@@ -207,13 +207,13 @@ mkdir -p ~/.local/share/gstreamer-1.0/plugins
 install -m755 gst-plugins-rs/target/release/libgstgtk4.so ~/.local/share/gstreamer-1.0/plugins/
 
 gst-inspect-1.0 gtk4paintablesink            # deve listar o elemento
-cargo build --release && ./target/release/nvr-dashboard
+cargo build --release && ./target/release/camera-manager
 ```
 </details>
 
 **O que foi testado (Ubuntu 24.04.5 limpo, num contêiner):** o script, a compilação
 contra o GStreamer 1.24.2, `sudo make install` (o `target/` fica do seu usuário),
-`nvr-dashboard --check`, **o `.deb` instalado num sistema virgem** (só com
+`camera-manager --check`, **o `.deb` instalado num sistema virgem** (só com
 `apt install ./…deb`), o app conectando a câmeras RTSP de teste com os quadros
 chegando ao `gtk4paintablesink`, e a remoção. **Não foi testado** em sessão gráfica
 real do Ubuntu (GNOME/Wayland), nem decodificação por hardware, áudio ou bandeja.
@@ -242,15 +242,15 @@ gstreamer-plugins-bad gstreamer-plugins-libav`.
 
 ### Windows
 
-**Instalador (recomendado):** baixe `nvr-dashboard-<versão>-windows-x64-setup.exe` e
+**Instalador (recomendado):** baixe `camera-manager-<versão>-windows-x64-setup.exe` e
 execute. Instala só para o seu usuário (não pede administrador), cria o atalho no
 Menu Iniciar (e, se quiser, na Área de Trabalho) e aparece em *Configurações →
 Aplicativos* para desinstalar. **Portátil:** extraia o `.zip` e rode
-`nvr-dashboard.exe`; nada é instalado.
+`camera-manager.exe`; nada é instalado.
 
 - O instalador **não é assinado**: o Windows pode mostrar *"O Windows protegeu o seu
   PC"* (SmartScreen). Clique em **Mais informações → Executar assim mesmo**.
-- Seus dados ficam em `%APPDATA%\nvr-dashboard` e **não** são apagados ao desinstalar.
+- Seus dados ficam em `%APPDATA%\camera-manager` e **não** são apagados ao desinstalar.
 - Diferenças do Linux: **sem ícone de bandeja**; o app não abre janela de terminal,
   então `--help`/`--check` e o log não aparecem (use o Linux ou uma build de
   desenvolvimento para diagnóstico); a decodificação por hardware usa Direct3D
@@ -270,15 +270,15 @@ tools/package-windows.sh          # gera dist/…-windows-x64.zip (+ setup.exe s
 
 ### macOS
 
-**Instalador:** abra o `.dmg` e arraste **NVR Dashboard** para *Aplicativos*.
+**Instalador:** abra o `.dmg` e arraste **Camera Manager** para *Aplicativos*.
 
 - O app **não é assinado por um desenvolvedor Apple** (só assinatura ad-hoc): na
   primeira vez, clique com o **botão direito → Abrir** (ou rode
-  `xattr -dr com.apple.quarantine "/Applications/NVR Dashboard.app"`). Assinar e
+  `xattr -dr com.apple.quarantine "/Applications/Camera Manager.app"`). Assinar e
   notarizar exige uma conta paga da Apple; o CI usa o certificado se você colocar o
   segredo `MACOS_SIGN_IDENTITY` (veja [Gerando os instaladores](#gerando-os-instaladores)).
 - Ao escanear a rede, o macOS pergunta se o app pode acessar **a rede local**: permita.
-- Seus dados ficam em `~/Library/Application Support/nvr-dashboard`.
+- Seus dados ficam em `~/Library/Application Support/camera-manager`.
 - Diferenças do Linux: **sem ícone de bandeja**; a decodificação por hardware usa o
   VideoToolbox (`applemedia`).
 
@@ -288,7 +288,7 @@ Compilar no macOS (Homebrew):
 brew install gtk4 gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
              gst-plugins-ugly gst-libav dylibbundler librsvg pkg-config rustup
 export GTK4_PLUGIN_DYLIB="$(tools/build-gtk4-plugin.sh "$PWD/gtk4-plugin")"
-tools/package-macos.sh            # gera dist/NVR Dashboard.app e o .dmg
+tools/package-macos.sh            # gera dist/Camera Manager.app e o .dmg
 ```
 
 ### Do código-fonte (todos os sistemas)
@@ -299,7 +299,7 @@ Requisitos: **Rust ≥ 1.92** (`rustup default stable`), **GTK4 ≥ 4.12** e
 
 ```sh
 cargo build --release
-./target/release/nvr-dashboard
+./target/release/camera-manager
 
 sudo make install      # Linux: compila e instala binário, .desktop e ícone (PREFIX=/usr/local)
 sudo make uninstall    # remove
@@ -338,9 +338,14 @@ Detalhes do `sudo make install` (Linux):
 
 | Sistema | Pasta | Como apagar tudo |
 |---|---|---|
-| Linux | `~/.config/nvr-dashboard` (respeita `$XDG_CONFIG_HOME`) | `rm -r ~/.config/nvr-dashboard` |
-| macOS | `~/Library/Application Support/nvr-dashboard` | `rm -r ~/Library/Application\ Support/nvr-dashboard` |
-| Windows | `%APPDATA%\nvr-dashboard` | apague a pasta no Explorer |
+| Linux | `~/.config/camera-manager` (respeita `$XDG_CONFIG_HOME`) | `rm -r ~/.config/camera-manager` |
+| macOS | `~/Library/Application Support/camera-manager` | `rm -r ~/Library/Application\ Support/camera-manager` |
+| Windows | `%APPDATA%\camera-manager` | apague a pasta no Explorer |
+
+> **Renomeado:** o app se chamava *nvr-dashboard*. Ao abrir, a pasta antiga
+> (`.../nvr-dashboard`) é movida sozinha para `.../camera-manager`, e as variáveis
+> `NVR_DASHBOARD_CONFIG`/`NVR_DASHBOARD_DEVICES` continuam valendo. As pastas de
+> imagens e vídeos (`<Imagens>/nvr-dashboard`) não são movidas.
 
 Desinstalar o programa **não** apaga essa pasta (câmeras, layout, ajustes): assim uma
 reinstalação ou atualização mantém tudo.
@@ -376,8 +381,8 @@ do executável (`src/bundle.rs`), sem script de lançamento.
 ## Configuração
 
 Há arquivos com papéis diferentes, todos na pasta de dados do app
-(`~/.config/nvr-dashboard/` no Linux, `~/Library/Application Support/nvr-dashboard/`
-no macOS, `%APPDATA%\nvr-dashboard\` no Windows — veja
+(`~/.config/camera-manager/` no Linux, `~/Library/Application Support/camera-manager/`
+no macOS, `%APPDATA%\camera-manager\` no Windows — veja
 [Onde ficam os seus dados](#onde-ficam-os-seus-dados); no Linux respeita
 `$XDG_CONFIG_HOME`):
 
@@ -426,7 +431,7 @@ Cada canal vira um card. Se o `host:porta` já existe, o app só acrescenta os
 canais que faltam (e atualiza o login).
 
 `devices.toml` é gravado com permissão `600` porque guarda as senhas em texto.
-Para outro caminho, use `$NVR_DASHBOARD_DEVICES`. Se o arquivo ficar ilegível,
+Para outro caminho, use `$CAMERA_MANAGER_DEVICES`. Se o arquivo ficar ilegível,
 ele é movido para `devices.toml.bak` e o app abre vazio, em vez de sobrescrevê-lo.
 
 ### Ajustes (`cameras.toml`, opcional)
@@ -441,9 +446,9 @@ $EDITOR config/cameras.toml
 sem nenhum, valem os padrões:
 
 1. `--config <ARQUIVO>`
-2. `$NVR_DASHBOARD_CONFIG`
+2. `$CAMERA_MANAGER_CONFIG`
 3. `./config/cameras.toml`
-4. `$XDG_CONFIG_HOME/nvr-dashboard/cameras.toml`
+4. `$XDG_CONFIG_HOME/camera-manager/cameras.toml`
 
 > **Migração:** versões anteriores liam `[nvr]`, `[[nvrs]]` e `[[cameras]]` deste
 > arquivo. Esses blocos ainda são aceitos (não quebram), mas **ignorados**, com um
@@ -482,8 +487,8 @@ rtsp://{user_enc}:{password_enc}@{host}:{port}/user={user}&password={password}&c
 
 | Seção | Chave | Padrão | Descrição |
 |---|---|---|---|
-| `snapshots` | `directory` | `<Imagens>/nvr-dashboard` | Onde salvar os PNG |
-| `recording` | `directory` | `<Vídeos>/nvr-dashboard` | Onde salvar os vídeos |
+| `snapshots` | `directory` | `<Imagens>/camera-manager` | Onde salvar os PNG |
+| `recording` | `directory` | `<Vídeos>/camera-manager` | Onde salvar os vídeos |
 | `recording` | `segment_seconds` | `300` | Duração de cada arquivo |
 | `recording` | `max_files` | `0` | Arquivos mantidos por sessão (`0` = sem limite) |
 | `recording` | `container` | `"mkv"` | `mkv` (robusto) ou `mp4` (portátil) |
@@ -623,9 +628,9 @@ tools/
 └── package-macos.sh      gera o .app e o .dmg
 packaging/
 ├── arch/PKGBUILD                     pacote do Arch
-├── windows/nvr-dashboard.iss         script do instalador (Inno Setup)
+├── windows/camera-manager.iss         script do instalador (Inno Setup)
 ├── macos/Info.plist.in               Info.plist do .app
-└── io.github.nvrdashboard.*          .desktop e ícone (Linux)
+└── io.github.cameramanager.*          .desktop e ícone (Linux)
 .github/workflows/build.yml           CI: testes e instaladores de todos os sistemas
 ```
 
@@ -820,7 +825,7 @@ câmera para testar antes de ligar `adaptive_stream`.
 
 ```sh
 cargo run --release -- --check                  # config + alcance dos dispositivos
-RUST_LOG=nvr_dashboard=debug cargo run --release # log detalhado da aplicação
+RUST_LOG=camera_manager=debug cargo run --release # log detalhado da aplicação
 GST_DEBUG=rtspsrc:5 cargo run --release          # log do GStreamer
 ```
 
@@ -906,11 +911,11 @@ capturar imagens e clicar por script sem tocar na sua sessão:
 ```sh
 gtk4-broadwayd :5 &
 GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 \
-  XDG_CONFIG_HOME=/tmp/cfg NVR_DASHBOARD_DEVICES=/tmp/cfg/devices.toml \
-  ./target/release/nvr-dashboard          # abre em http://127.0.0.1:8085
+  XDG_CONFIG_HOME=/tmp/cfg CAMERA_MANAGER_DEVICES=/tmp/cfg/devices.toml \
+  ./target/release/camera-manager          # abre em http://127.0.0.1:8085
 ```
 
-Use `XDG_CONFIG_HOME` e `NVR_DASHBOARD_DEVICES` apontando para um diretório
+Use `XDG_CONFIG_HOME` e `CAMERA_MANAGER_DEVICES` apontando para um diretório
 temporário para não misturar com o seu cadastro e layout reais. Nesse backend
 ponha `convert_video = true` (cores) e lembre que **arrastar e soltar do GTK não
 funciona** nele (trocar posição de cards não é testável ali).

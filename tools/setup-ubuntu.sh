@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Prepara o Ubuntu 24.04 (e derivados/Debian recentes) para compilar e rodar o
-# nvr-dashboard. Roda como usuário comum; usa `sudo` só para o `apt`.
+# camera-manager. Roda como usuário comum; usa `sudo` só para o `apt`.
 #
 # O que ele resolve (e por que não dá só um `apt install`):
 #   1. O Rust do apt no Ubuntu 24.04 é o 1.75; o projeto exige >= 1.92
@@ -79,5 +79,5 @@ echo "GStreamer: $(gst-inspect-1.0 --version | head -n1)"
 echo "GTK4:      $(pkg-config --modversion gtk4)"
 echo
 echo "Pronto. Agora, no diretório do projeto:"
-echo "  cargo build --release && ./target/release/nvr-dashboard"
+echo "  cargo build --release && ./target/release/camera-manager"
 echo "  (ou: sudo make install)"

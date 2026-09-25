@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! Windows / portátil      macOS (.app)
-//! nvr-dashboard.exe       Contents/MacOS/nvr-dashboard
+//! camera-manager.exe       Contents/MacOS/camera-manager
 //! lib/gstreamer-1.0/      Contents/Resources/lib/gstreamer-1.0/
 //! libexec/gstreamer-1.0/  Contents/Resources/libexec/gstreamer-1.0/
 //! share/glib-2.0/schemas  Contents/Resources/share/glib-2.0/schemas
@@ -106,7 +106,7 @@ pub fn configure() {
     // O registro de plugins vai para a pasta de cache do usuário, com a versão
     // no nome: um cache velho de outra versão faria o GStreamer não achar nada.
     let registry = glib::user_cache_dir()
-        .join("nvr-dashboard")
+        .join("camera-manager")
         .join(format!("gst-registry-{}.bin", env!("CARGO_PKG_VERSION")));
     if let Some(dir) = registry.parent() {
         let _ = std::fs::create_dir_all(dir);

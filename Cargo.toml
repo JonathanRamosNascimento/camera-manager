@@ -1,5 +1,5 @@
 [package]
-name = "nvr-dashboard"
+name = "camera-manager"
 version = "0.1.0"
 edition = "2024"
 

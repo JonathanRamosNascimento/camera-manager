@@ -1,17 +1,17 @@
-# Instalação do nvr-dashboard no sistema.
+# Instalação do camera-manager no sistema.
 #
 #   sudo make install     compila (como o SEU usuário) e instala binário, .desktop e ícone
 #   sudo make uninstall   remove o que o install colocou (seus dados ficam)
 #   make                  só compila em release
-#   make user-config      cria ~/.config/nvr-dashboard/cameras.toml (ajustes opcionais)
+#   make user-config      cria ~/.config/camera-manager/cameras.toml (ajustes opcionais)
 #
 # Com `sudo`, o cargo é executado como o usuário que chamou o sudo: o root não tem
 # o Rust do rustup configurado, e compilar como root deixaria `target/` dele.
 
 PREFIX  ?= /usr/local
 DESTDIR ?=
-BIN     := nvr-dashboard
-APP_ID  := io.github.nvrdashboard.NvrDashboard
+BIN     := camera-manager
+APP_ID  := io.github.cameramanager.CameraManager
 
 BINDIR     := $(DESTDIR)$(PREFIX)/bin
 APPDIR     := $(DESTDIR)$(PREFIX)/share/applications
@@ -51,7 +51,7 @@ install: build
 	-update-desktop-database $(APPDIR) 2>/dev/null
 	-gtk4-update-icon-cache -qtf $(DESTDIR)$(PREFIX)/share/icons/hicolor 2>/dev/null
 	@echo
-	@echo "Instalado. Abra o \"NVR Dashboard\" no menu (ou rode: $(BIN)) e cadastre as câmeras."
+	@echo "Instalado. Abra o \"Camera Manager\" no menu (ou rode: $(BIN)) e cadastre as câmeras."
 	@echo "Ajustes opcionais (gravação, movimento…):  make user-config"
 
 # Cria os ajustes do usuário (opcionais) com permissão 600, sem sobrescrever.
