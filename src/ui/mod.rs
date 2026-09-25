@@ -38,7 +38,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::camera::{self, Camera, Quality, Redactor, UrlTemplate};
-use crate::config::Config;
+use crate::config::{Config, Secret};
 use crate::notify::{Notifier, TrayCommand, TraySummary};
 use crate::pipeline::{self, PipelineOptions, StreamStats};
 use crate::reconnect::{
@@ -177,6 +177,8 @@ pub fn run(config: Config, store: Store, tokio: tokio::runtime::Handle) -> Resul
 /// Tudo de uma câmera em exibição.
 struct Slot {
     camera: Camera,
+    /// Nome exibido: começa igual a `camera.name` e muda ao renomear.
+    name: RefCell<String>,
     tile: CameraTile,
     paintable: Option<gdk::Paintable>,
     /// `None` depois que a câmera é removida (ou se a pipeline nem subiu).
@@ -189,6 +191,15 @@ struct Slot {
     recording_active: Cell<bool>,
     /// Qualidade escolhida para o grid.
     quality: Cell<Quality>,
+}
+
+impl Slot {
+    /// A câmera com o nome atual (o `camera.name` guarda o do momento da criação).
+    fn named_camera(&self) -> Camera {
+        let mut camera = self.camera.clone();
+        camera.name = self.name.borrow().clone();
+        camera
+    }
 }
 
 /// O que é preciso para criar pipelines e supervisores depois da janela aberta.
@@ -259,7 +270,7 @@ impl Dashboard {
         let Some(slot) = self.slot(id) else {
             return;
         };
-        self.fullscreen.show(&slot.camera, slot.paintable.as_ref());
+        self.fullscreen.show(&slot.named_camera(), slot.paintable.as_ref());
         self.fullscreen.set_state(&slot.state.borrow());
         self.fullscreen.set_recording(slot.recording_active.get());
         self.stack.set_visible_child_name(PAGE_SINGLE);
@@ -377,7 +388,9 @@ impl Dashboard {
             .borrow_mut()
             .add_password(stored.password.expose());
 
-        // Login novo: as câmeras já no ar usam o antigo, então recomeçam.
+        // Login novo: as câmeras já no ar usam o antigo, então recomeçam. Em
+        // lote, para o grid manter a posição de cada card.
+        self.grid.set_batch(true);
         let channels = if credentials_changed {
             let stale: Vec<usize> = self
                 .live_slots()
@@ -400,8 +413,94 @@ impl Dashboard {
             let camera = camera::build_one(id, &stored, &urls, entry, &self.config.app);
             self.spawn_camera(camera);
         }
+        self.grid.set_batch(false);
         self.cameras_changed();
         Ok(count)
+    }
+
+    /// Renomeia uma câmera (só o nome exibido; o stream não é tocado).
+    fn rename_camera(&self, id: usize, name: &str) {
+        let name = name.trim();
+        let Some(slot) = self.slot(id) else {
+            return;
+        };
+        if name.is_empty() || *slot.name.borrow() == name {
+            return;
+        }
+        *slot.name.borrow_mut() = name.to_string();
+        slot.tile.set_name(name);
+        self.store
+            .borrow_mut()
+            .rename_channel(&slot.camera.nvr_id, slot.camera.channel, name);
+        self.save_store();
+        if self.fullscreen.current() == Some(id) {
+            self.fullscreen.show(&slot.named_camera(), slot.paintable.as_ref());
+        }
+        self.cameras_changed();
+    }
+
+    /// Edita endereço/porta/login de um dispositivo. Vale para todos os canais
+    /// dele, que são recriados mantendo posição, tamanho e qualidade no grid.
+    /// `password = None` mantém a senha atual.
+    fn update_device(
+        &self,
+        old_id: &str,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: Option<Secret>,
+        url_template: Option<String>,
+    ) -> Result<()> {
+        let old_slots: Vec<Rc<Slot>> = self
+            .live_slots()
+            .into_iter()
+            .filter(|slot| slot.camera.nvr_id == old_id)
+            .collect();
+        let updated = self.store.borrow_mut().update_device(
+            old_id,
+            host,
+            port,
+            username,
+            password,
+            url_template,
+        )?;
+        self.save_store();
+        self.spawner
+            .redactor
+            .borrow_mut()
+            .add_password(updated.password.expose());
+
+        self.grid.set_batch(true);
+        for slot in &old_slots {
+            // A chave (`<dispositivo>/<canal>`) muda com o endereço: leva junto
+            // a posição no grid e a qualidade escolhida.
+            let old_key = slot.camera.pref_key();
+            let new_key = format!("{}/{}", updated.id, slot.camera.channel);
+            if old_key != new_key {
+                self.grid.alias_key(&old_key, &new_key);
+                let mut prefs = self.quality_prefs.borrow_mut();
+                if let Some(&quality) = prefs.get(&old_key) {
+                    prefs.insert(new_key, quality);
+                    quality::save(&prefs);
+                }
+            }
+            self.detach_camera(slot.camera.id);
+        }
+        let urls = Arc::new(UrlTemplate::new(&updated));
+        for entry in &updated.channels {
+            let id = self.slots.borrow().len();
+            self.spawn_camera(camera::build_one(id, &updated, &urls, entry, &self.config.app));
+        }
+        self.grid.set_batch(false);
+        self.cameras_changed();
+        Ok(())
+    }
+
+    fn save_store(&self) {
+        if let Err(err) = self.store.borrow().save() {
+            tracing::error!(erro = %format!("{err:#}"), "não consegui salvar o cadastro");
+            self.toast(&format!("Não consegui salvar o cadastro: {err:#}"));
+        }
     }
 
     /// Remove a câmera do dashboard **e** do cadastro.
@@ -518,6 +617,7 @@ impl Dashboard {
         let mut slots = self.slots.borrow_mut();
         debug_assert_eq!(slots.len(), id, "ids de câmera são sequenciais");
         slots.push(Some(Rc::new(Slot {
+            name: RefCell::new(camera.name.clone()),
             camera,
             tile,
             paintable,
@@ -538,7 +638,7 @@ impl Dashboard {
         let Some(paintable) = &slot.paintable else {
             return;
         };
-        let camera = &slot.camera;
+        let camera = &slot.named_camera();
         match snapshot::capture(&self.window, paintable, &self.snapshot_dir, &camera.slug()) {
             Ok(path) => {
                 tracing::info!(camera = %camera.label(), arquivo = %path.display(), "captura salva");
@@ -597,6 +697,7 @@ impl Dashboard {
             return;
         };
         let (tile, camera) = (&slot.tile, &slot.camera);
+        let name = slot.name.borrow().clone();
 
         match event.kind {
             EventKind::State(state) => {
@@ -605,15 +706,15 @@ impl Dashboard {
                     self.fullscreen.set_state(&state);
                 }
                 match &state {
-                    CameraState::Live => self.notifier.camera_recovered(id, &camera.name),
+                    CameraState::Live => self.notifier.camera_recovered(id, &name),
                     CameraState::Reconnecting {
                         attempt, reason, ..
                     } => self
                         .notifier
-                        .camera_offline(id, &camera.name, *attempt, reason),
+                        .camera_offline(id, &name, *attempt, reason),
                     CameraState::Failed(reason) => {
                         self.notifier
-                            .camera_offline(id, &camera.name, u32::MAX, reason)
+                            .camera_offline(id, &name, u32::MAX, reason)
                     }
                     // Nem "conectando" nem "aguardando keyframe" são falha:
                     // não geram notificação.
@@ -625,14 +726,14 @@ impl Dashboard {
                 match status {
                     RecordingStatus::Started { pattern } => {
                         slot.recording_active.set(true);
-                        self.toast(&format!("Gravando {}", camera.name));
+                        self.toast(&format!("Gravando {name}"));
                         tracing::debug!(camera = %camera.label(), arquivos = %pattern, "gravando");
                     }
                     RecordingStatus::Stopped => slot.recording_active.set(false),
                     RecordingStatus::Failed(reason) => {
                         slot.recording_active.set(false);
                         slot.recording_wanted.set(false);
-                        self.notifier.recording_failed(&camera.name, &reason);
+                        self.notifier.recording_failed(&name, &reason);
                         self.toast(&format!("Falha na gravação: {reason}"));
                     }
                 }
@@ -640,7 +741,7 @@ impl Dashboard {
             }
             EventKind::Motion => {
                 if self.notify_motion {
-                    self.notifier.motion(&camera.name);
+                    self.notifier.motion(&name);
                 }
             }
         }
@@ -664,7 +765,7 @@ impl Dashboard {
         let focused = self.fullscreen.current();
         for slot in self.live_slots() {
             let detail = slot.tile.sample();
-            slot.tile.tick();
+            slot.tile.tick(&detail);
             if focused == Some(slot.camera.id) {
                 self.fullscreen.set_detail(&detail);
                 self.fullscreen
@@ -701,7 +802,7 @@ impl Dashboard {
             offline: slots
                 .iter()
                 .filter(|s| !s.tile.is_live())
-                .map(|s| s.camera.name.clone())
+                .map(|s| s.name.borrow().clone())
                 .collect(),
         };
         // Só falamos com a bandeja quando algo muda de verdade.
@@ -813,10 +914,11 @@ fn build_window(app: &gtk::Application, bootstrap: &Bootstrap) -> SupervisorsDon
     // Ícone + texto: um `Button` com `label` e `icon_name` mostraria só o ícone.
     let cameras_content = gtk::Box::builder().spacing(6).build();
     cameras_content.append(&gtk::Image::from_icon_name("camera-video-symbolic"));
-    cameras_content.append(&gtk::Label::new(Some("Câmeras")));
+    cameras_content.append(&gtk::Label::new(Some("Gerenciar câmeras")));
     let cameras_button = gtk::Button::builder()
         .child(&cameras_content)
-        .tooltip_text("Lista de câmeras: adicionar, escanear a rede ou remover")
+        .css_classes(["suggested-action"])
+        .tooltip_text("Ver, editar, adicionar ou remover câmeras")
         .build();
     {
         let sender = actions_tx.clone();

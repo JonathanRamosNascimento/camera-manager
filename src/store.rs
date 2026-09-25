@@ -200,6 +200,55 @@ impl Store {
         }
     }
 
+    /// Troca endereço, porta, usuário, senha e modelo de URL de um dispositivo,
+    /// mantendo os canais. `password = None` mantém a senha atual.
+    ///
+    /// O `id` acompanha `host:porta`; se o novo já pertencer a outro
+    /// dispositivo, falha sem alterar nada.
+    pub fn update_device(
+        &mut self,
+        old_id: &str,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: Option<Secret>,
+        url_template: Option<String>,
+    ) -> Result<Device> {
+        let Some(index) = self.devices.iter().position(|d| d.id == old_id) else {
+            bail!("dispositivo não encontrado");
+        };
+        let new_id = Device::make_id(host, port);
+        if new_id != old_id && self.devices.iter().any(|d| d.id == new_id) {
+            bail!("já existe um dispositivo em {new_id}");
+        }
+        let mut updated = self.devices[index].clone();
+        updated.id = new_id;
+        updated.host = host.trim().to_string();
+        updated.port = port;
+        updated.username = username.trim().to_string();
+        if let Some(password) = password {
+            updated.password = password;
+        }
+        updated.url_template = url_template;
+        updated.channels = self.devices[index].channels.clone();
+        // Mesmas regras do cadastro (host/usuário/senha preenchidos, etc.).
+        updated.validate()?;
+        self.devices[index] = updated.clone();
+        Ok(updated)
+    }
+
+    /// Renomeia um canal.
+    pub fn rename_channel(&mut self, device_id: &str, channel: u32, name: &str) {
+        if let Some(entry) = self
+            .devices
+            .iter_mut()
+            .find(|d| d.id == device_id)
+            .and_then(|d| d.channels.iter_mut().find(|c| c.channel == channel))
+        {
+            entry.name = name.trim().to_string();
+        }
+    }
+
     /// Remove um canal; o dispositivo some junto quando fica sem canais.
     pub fn remove_channel(&mut self, device_id: &str, channel: u32) {
         if let Some(device) = self.devices.iter_mut().find(|d| d.id == device_id) {
@@ -318,6 +367,47 @@ mod tests {
         assert_eq!(s.devices[0].channels.len(), 1);
         s.remove_channel("10.0.0.5:554", 2);
         assert!(s.devices.is_empty());
+    }
+
+    #[test]
+    fn editar_dispositivo_troca_ip_e_mantem_canais_e_senha() {
+        let dir = tempdir();
+        let mut s = store(&dir);
+        s.add(device("10.0.0.5", &[1, 2])).unwrap();
+        let updated = s
+            .update_device("10.0.0.5:554", "10.0.0.9", 8554, "operador", None, None)
+            .unwrap();
+        assert_eq!(updated.id, "10.0.0.9:8554");
+        assert_eq!(updated.channels.len(), 2);
+        assert_eq!(updated.password.expose(), "segredo", "senha mantida");
+        assert_eq!(s.devices[0].username, "operador");
+    }
+
+    #[test]
+    fn editar_para_endereco_de_outro_dispositivo_falha_sem_alterar() {
+        let dir = tempdir();
+        let mut s = store(&dir);
+        s.add(device("10.0.0.5", &[1])).unwrap();
+        s.add(device("10.0.0.6", &[1])).unwrap();
+        let err = s
+            .update_device("10.0.0.5:554", "10.0.0.6", 554, "admin", None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("já existe"), "{err}");
+        assert_eq!(s.devices[0].host, "10.0.0.5");
+    }
+
+    #[test]
+    fn editar_com_senha_nova_e_renomear_canal() {
+        let dir = tempdir();
+        let mut s = store(&dir);
+        s.add(device("10.0.0.5", &[1, 2])).unwrap();
+        let updated = s
+            .update_device("10.0.0.5:554", "10.0.0.5", 554, "admin", Some(Secret::new("nova")), None)
+            .unwrap();
+        assert_eq!(updated.password.expose(), "nova");
+        s.rename_channel("10.0.0.5:554", 2, "  Quintal ");
+        assert_eq!(s.devices[0].channels[1].name, "Quintal");
     }
 
     #[test]

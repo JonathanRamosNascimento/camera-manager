@@ -36,7 +36,7 @@ gravação em cada tile._
 - Abre **vazio** na primeira execução, com botões para escanear a rede ou adicionar manualmente
 - Escaneia a sub-rede (porta RTSP 554 + ONVIF/WS-Discovery) e lista o que encontrar
 - "Detectar canais" testa os canais 1–8 do dispositivo e marca só os que têm imagem
-- Lista de câmeras (botão **Câmeras** na barra de título) para adicionar e remover, sem reiniciar o app
+- Botão **Gerenciar câmeras** (barra de título): lista com dados ao vivo, editar, adicionar e remover, sem reiniciar o app
 
 **Visualização**
 
@@ -135,8 +135,18 @@ Na primeira execução o app abre sem câmeras. Use:
   encontrado, informe usuário e senha e use **Detectar canais**.
 - **Adicionar manualmente** — endereço, porta, usuário, senha e canais (`1-3`,
   `1,2,5`…). Em **Avançado** dá para trocar o modelo da URL RTSP.
-- **Câmeras** (barra de título) — lista as câmeras, com **Remover**, e atalhos para
-  as duas opções acima.
+- **Gerenciar câmeras** (botão azul no canto esquerdo da barra de título) — abre a lista de
+  câmeras cadastradas. Cada linha mostra o **nome**, o endereço (`host:porta`),
+  o **canal**, o **usuário**, o estado ao vivo (ao vivo / conectando /
+  reconectando…), resolução, fps e Mb/s, e a qualidade escolhida. Os dados
+  atualizam a cada segundo. Dali você pode:
+  - **Editar** — renomear a câmera e trocar endereço, porta, usuário, senha e o
+    modelo da URL. Endereço, porta, usuário e senha valem para o **dispositivo
+    inteiro** (todos os canais dele): as câmeras são recriadas mantendo posição,
+    tamanho e qualidade no grid. Senha vazia = mantém a atual. Só o nome não
+    interrompe o vídeo.
+  - **Remover** — com confirmação; some do grid e do cadastro.
+  - **Adicionar manualmente** / **Escanear a rede** — as duas opções acima.
 
 **Detectar canais:** muitos NVRs aceitam a sessão RTSP até para canais que não
 existem, então "conectou" não prova nada. O teste só considera um canal vivo se
@@ -271,6 +281,10 @@ Câmeras novas entram na primeira célula livre. Se o **número de colunas** mud
 (ex.: ao passar de 4 para 5 câmeras o grid vai de 2 para 3 colunas), o layout
 salvo é descartado e todos voltam ao mesmo tamanho. Para voltar ao padrão a
 qualquer momento, apague o arquivo.
+
+As janelas de gerenciamento (lista, cadastro, edição e varredura) fecham com o
+**X** ou com **Esc**; abrir uma de novo cria uma janela nova, já com os dados
+atuais.
 
 ### Qualidade da imagem
 

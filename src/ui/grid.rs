@@ -329,13 +329,16 @@ impl Shared {
     }
 
     /// Guarda o layout atual como referência para os próximos `relayout`.
+    ///
+    /// Mescla em vez de substituir: a posição de uma câmera retirada por
+    /// instantes (edição, reconexão do cadastro) sobrevive até ela voltar. Com
+    /// número de colunas novo, o que havia deixa de valer.
     fn remember(&self) {
-        *self.saved.borrow_mut() = self
-            .entries
-            .borrow()
-            .iter()
-            .map(|e| (e.key.clone(), e.rect))
-            .collect();
+        let mut saved = self.saved.borrow_mut();
+        if self.saved_columns.get() != self.columns.get() {
+            saved.clear();
+        }
+        saved.extend(self.entries.borrow().iter().map(|e| (e.key.clone(), e.rect)));
         self.saved_columns.set(self.columns.get());
     }
 
@@ -746,8 +749,20 @@ impl GridView {
         };
         if let Some(entry) = removed {
             self.shared.grid.remove(&entry.widget);
-            self.shared.relayout();
-            self.shared.schedule_save();
+            // Em lote (troca de vários cards), o layout é refeito uma vez no fim.
+            if !self.shared.batching.get() {
+                self.shared.relayout();
+                self.shared.schedule_save();
+            }
+        }
+    }
+
+    /// Faz a câmera de chave `new` herdar a posição/tamanho de `old` (a chave
+    /// muda quando o endereço do dispositivo é editado).
+    pub fn alias_key(&self, old: &str, new: &str) {
+        let rect = self.shared.saved.borrow().get(old).copied();
+        if let Some(rect) = rect {
+            self.shared.saved.borrow_mut().insert(new.to_string(), rect);
         }
     }
 

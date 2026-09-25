@@ -36,6 +36,7 @@ const MOTION_BADGE_DURATION: Duration = Duration::from_secs(6);
 pub struct CameraTile {
     root: gtk::Overlay,
     dot: gtk::Label,
+    name: gtk::Label,
     detail: gtk::Label,
     rec_badge: gtk::Label,
     motion_badge: gtk::Label,
@@ -216,6 +217,7 @@ impl CameraTile {
         let tile = Self {
             root,
             dot,
+            name,
             detail,
             rec_badge,
             motion_badge,
@@ -233,6 +235,17 @@ impl CameraTile {
         };
         tile.set_state(&CameraState::Connecting);
         tile
+    }
+
+    /// Renomeia o card (nome na faixa superior e na dica).
+    pub fn set_name(&self, name: &str) {
+        self.name.set_label(name);
+    }
+
+    /// Última linha "1920×1080 · 25 fps · 1,8 Mb/s" calculada pelo tick, sem
+    /// mexer nos contadores (ao contrário de [`sample`](Self::sample)).
+    pub fn detail_text(&self) -> String {
+        self.detail.label().to_string()
     }
 
     pub fn widget(&self) -> &gtk::Widget {
@@ -298,12 +311,15 @@ impl CameraTile {
 
     /// Atualiza fps, bitrate e o selo de movimento.
     /// Chamado ~1×/s pelo main loop do GLib.
-    pub fn tick(&self) {
-        let summary = self.sample();
+    ///
+    /// `summary` é o resultado de [`sample`](Self::sample), colhido uma única vez
+    /// por tick pelo chamador: amostrar de novo aqui zeraria a janela de
+    /// medição e devolveria o texto antigo.
+    pub fn tick(&self, summary: &str) {
         self.motion_badge
             .set_visible(self.stats.motion_recent(MOTION_BADGE_DURATION));
         if self.live.get() {
-            self.detail.set_label(&summary);
+            self.detail.set_label(summary);
         }
     }
 

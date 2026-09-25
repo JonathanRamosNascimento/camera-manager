@@ -12,7 +12,9 @@ use std::rc::{Rc, Weak};
 use gtk::prelude::*;
 use gtk::{gio, glib};
 
-use super::Dashboard;
+use super::{Dashboard, Slot};
+use crate::camera::Quality;
+use crate::reconnect::CameraState;
 use crate::config::{DEFAULT_URL_TEMPLATE, Secret};
 use crate::discovery::{self, Found, ProbeResult, ScanEvent};
 use crate::store::{ChannelEntry, DEFAULT_RTSP_PORT, Device, parse_channels};
@@ -29,7 +31,12 @@ thread_local! {
 /// Traz para a frente a janela guardada em `slot`, se ainda existir.
 fn present_existing(slot: &'static std::thread::LocalKey<RefCell<Option<glib::WeakRef<gtk::Window>>>>) -> bool {
     slot.with(|cell| {
-        if let Some(window) = cell.borrow().as_ref().and_then(|weak| weak.upgrade()) {
+        if let Some(window) = cell
+            .borrow()
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+            .filter(|window| window.is_visible())
+        {
             window.present();
             true
         } else {
@@ -43,6 +50,25 @@ fn remember(
     window: &gtk::Window,
 ) {
     slot.with(|cell| *cell.borrow_mut() = Some(window.downgrade()));
+    // Janela fechada = janela esquecida: senão o botão "reabriria" a antiga,
+    // já destruída, em vez de criar uma nova.
+    window.connect_destroy(move |_| slot.with(|cell| *cell.borrow_mut() = None));
+}
+
+/// Esc fecha a janela.
+fn close_on_escape(window: &gtk::Window) {
+    let keys = gtk::EventControllerKey::new();
+    let weak = window.downgrade();
+    keys.connect_key_pressed(move |_, key, _, _| {
+        if key == gtk::gdk::Key::Escape
+            && let Some(window) = weak.upgrade()
+        {
+            window.close();
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
+    });
+    window.add_controller(keys);
 }
 
 /// Janela em primeiro plano, para as novas ficarem "presas" nela.
@@ -54,14 +80,16 @@ fn parent_of(dash: &Dashboard) -> gtk::Window {
 }
 
 fn dialog(dash: &Dashboard, title: &str, width: i32, height: i32, modal: bool) -> gtk::Window {
-    gtk::Window::builder()
+    let window = gtk::Window::builder()
         .title(title)
         .transient_for(&parent_of(dash))
         .modal(modal)
         .destroy_with_parent(true)
         .default_width(width)
         .default_height(height)
-        .build()
+        .build();
+    close_on_escape(&window);
+    window
 }
 
 fn label(text: &str, classes: &[&str]) -> gtk::Label {
@@ -96,11 +124,18 @@ fn pluralize(n: usize) -> String {
 // Lista de câmeras
 // ---------------------------------------------------------------------------
 
+/// Rótulos de uma linha da lista que mudam com o tempo (status, fps…).
+struct LiveRow {
+    id: usize,
+    dot: gtk::Label,
+    info: gtk::Label,
+}
+
 pub(super) fn show_cameras(dash: &Rc<Dashboard>) {
     if present_existing(&CAMERAS_WINDOW) {
         return;
     }
-    let window = dialog(dash, "Câmeras", 560, 480, false);
+    let window = dialog(dash, "Gerenciar câmeras", 640, 520, false);
     remember(&CAMERAS_WINDOW, &window);
 
     let list = gtk::ListBox::builder()
@@ -149,19 +184,41 @@ pub(super) fn show_cameras(dash: &Rc<Dashboard>) {
         });
     }
 
-    // Mantém a lista em dia enquanto a janela estiver aberta.
+    // Reconstrói a lista quando o conjunto de câmeras muda...
+    let live: Rc<RefCell<Vec<LiveRow>>> = Rc::default();
     let refresh = {
         let dash = Rc::downgrade(dash);
         let list = list.clone();
         let window = window.downgrade();
+        let live = Rc::clone(&live);
         move || {
             if let (Some(dash), Some(window)) = (dash.upgrade(), window.upgrade()) {
-                fill_camera_list(&list, &dash, &window);
+                fill_camera_list(&list, &dash, &window, &live);
             }
         }
     };
     refresh();
     *dash.on_cameras_changed.borrow_mut() = Some(Box::new(refresh));
+
+    // ...e atualiza status/resolução/fps a cada segundo, sem refazer as linhas
+    // (refazer tiraria o foco dos botões).
+    {
+        let dash = Rc::downgrade(dash);
+        let window = window.downgrade();
+        glib::timeout_add_seconds_local(1, move || {
+            let (Some(dash), Some(_)) = (dash.upgrade(), window.upgrade()) else {
+                return glib::ControlFlow::Break;
+            };
+            for row in live.borrow().iter() {
+                if let Some(slot) = dash.slot(row.id) {
+                    let (css, text) = live_status(&slot);
+                    set_status_class(&row.dot, css);
+                    row.info.set_label(&text);
+                }
+            }
+            glib::ControlFlow::Continue
+        });
+    }
     {
         let dash = Rc::downgrade(dash);
         window.connect_destroy(move |_| {
@@ -173,32 +230,118 @@ pub(super) fn show_cameras(dash: &Rc<Dashboard>) {
     window.present();
 }
 
-fn fill_camera_list(list: &gtk::ListBox, dash: &Rc<Dashboard>, window: &gtk::Window) {
+const STATUS_CLASSES: [&str; 3] = ["status-live", "status-connecting", "status-error"];
+
+fn set_status_class(dot: &gtk::Label, css: &str) {
+    for class in STATUS_CLASSES {
+        dot.remove_css_class(class);
+    }
+    dot.add_css_class(css);
+}
+
+/// Classe de cor e texto de estado de uma câmera: "Ao vivo · 1920×1080 · 25 fps…".
+fn live_status(slot: &Slot) -> (&'static str, String) {
+    let (css, state) = match &*slot.state.borrow() {
+        CameraState::Live => ("status-live", "Ao vivo".to_string()),
+        CameraState::Connecting => ("status-connecting", "Conectando…".to_string()),
+        CameraState::WaitingKeyframe => ("status-connecting", "Aguardando keyframe…".to_string()),
+        CameraState::Reconnecting { attempt, .. } => (
+            "status-error",
+            format!("Reconectando (tentativa {attempt})"),
+        ),
+        CameraState::Failed(reason) => ("status-error", format!("Falha: {reason}")),
+    };
+    let mut text = state;
+    if slot.tile.is_live() {
+        text.push_str(&format!(" · {}", slot.tile.detail_text()));
+    }
+    if slot.camera.has_substream() {
+        text.push_str(match slot.quality.get() {
+            Quality::High => " · qualidade alta",
+            Quality::Low => " · qualidade baixa",
+        });
+    }
+    (css, text)
+}
+
+fn fill_camera_list(
+    list: &gtk::ListBox,
+    dash: &Rc<Dashboard>,
+    window: &gtk::Window,
+    live: &Rc<RefCell<Vec<LiveRow>>>,
+) {
     list.remove_all();
+    live.borrow_mut().clear();
+
     for slot in dash.live_slots() {
         let camera = &slot.camera;
+        let username = dash
+            .store
+            .borrow()
+            .devices
+            .iter()
+            .find(|d| d.id == camera.nvr_id)
+            .map(|d| d.username.clone())
+            .unwrap_or_default();
+
+        let dot = gtk::Label::builder()
+            .label("●")
+            .css_classes(["status-dot"])
+            .valign(gtk::Align::Start)
+            .margin_top(2)
+            .build();
+        let name = label(&slot.name.borrow(), &["heading"]);
+        let address = label(
+            &format!(
+                "{}:{} · canal {} · usuário {username}",
+                camera.host, camera.port, camera.channel
+            ),
+            &["dim-label", "caption"],
+        );
+        let (css, status_text) = live_status(&slot);
+        set_status_class(&dot, css);
+        let info = label(&status_text, &["caption"]);
+
         let text = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(2)
             .hexpand(true)
             .valign(gtk::Align::Center)
             .build();
-        text.append(&label(&camera.name, &["heading"]));
-        text.append(&label(
-            &format!("{}:{} · canal {}", camera.host, camera.port, camera.channel),
-            &["dim-label", "caption"],
-        ));
+        text.append(&name);
+        text.append(&address);
+        text.append(&info);
 
+        let edit = gtk::Button::builder()
+            .label("Editar")
+            .valign(gtk::Align::Center)
+            .build();
         let remove = gtk::Button::builder()
             .label("Remover")
             .valign(gtk::Align::Center)
             .css_classes(["destructive-action"])
             .build();
         let id = camera.id;
-        let name = camera.name.clone();
-        let dash_weak = Rc::downgrade(dash);
-        let window = window.clone();
-        remove.connect_clicked(move |_| confirm_remove(&window, &dash_weak, id, &name));
+        {
+            let dash = Rc::downgrade(dash);
+            edit.connect_clicked(move |_| {
+                if let Some(dash) = dash.upgrade() {
+                    show_edit_camera(&dash, id);
+                }
+            });
+        }
+        {
+            // Fraca: o botão vive dentro da janela; uma referência forte formaria
+            // um ciclo e a janela nunca seria liberada.
+            let dash = Rc::downgrade(dash);
+            let window = window.downgrade();
+            let name = slot.name.borrow().clone();
+            remove.connect_clicked(move |_| {
+                if let Some(window) = window.upgrade() {
+                    confirm_remove(&window, &dash, id, &name);
+                }
+            });
+        }
 
         let row = gtk::Box::builder()
             .spacing(12)
@@ -207,9 +350,12 @@ fn fill_camera_list(list: &gtk::ListBox, dash: &Rc<Dashboard>, window: &gtk::Win
             .margin_start(12)
             .margin_end(12)
             .build();
+        row.append(&dot);
         row.append(&text);
+        row.append(&edit);
         row.append(&remove);
         list.append(&row);
+        live.borrow_mut().push(LiveRow { id, dot, info });
     }
 }
 
@@ -230,6 +376,169 @@ fn confirm_remove(window: &gtk::Window, dash: &Weak<Dashboard>, id: usize, name:
             dash.remove_camera(id);
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Edição
+// ---------------------------------------------------------------------------
+
+/// Edita o nome da câmera e os dados de conexão do dispositivo dela.
+pub(super) fn show_edit_camera(dash: &Rc<Dashboard>, id: usize) {
+    let Some(slot) = dash.slot(id) else {
+        return;
+    };
+    let Some(device) = dash
+        .store
+        .borrow()
+        .devices
+        .iter()
+        .find(|d| d.id == slot.camera.nvr_id)
+        .cloned()
+    else {
+        return;
+    };
+    let siblings = device.channels.len();
+
+    let window = dialog(dash, "Editar câmera", 460, -1, true);
+    let name = entry(&slot.name.borrow(), "Nome");
+    let host = entry(&device.host, "192.168.1.10");
+    let port = entry(&device.port.to_string(), "554");
+    let user = entry(&device.username, "usuário");
+    let password = gtk::PasswordEntry::builder()
+        .show_peek_icon(true)
+        .hexpand(true)
+        .placeholder_text("deixe vazio para manter a atual")
+        .activates_default(true)
+        .build();
+    let template = entry(device.url_template.as_deref().unwrap_or(""), DEFAULT_URL_TEMPLATE);
+
+    let grid = gtk::Grid::builder()
+        .row_spacing(8)
+        .column_spacing(12)
+        .build();
+    let rows: [(&str, &gtk::Widget); 5] = [
+        ("Nome", name.upcast_ref()),
+        ("Endereço (IP)", host.upcast_ref()),
+        ("Porta RTSP", port.upcast_ref()),
+        ("Usuário", user.upcast_ref()),
+        ("Senha", password.upcast_ref()),
+    ];
+    for (row, (text, widget)) in rows.iter().enumerate() {
+        let caption = label(text, &[]);
+        caption.set_valign(gtk::Align::Center);
+        grid.attach(&caption, 0, row as i32, 1, 1);
+        grid.attach(*widget, 1, row as i32, 1, 1);
+    }
+
+    let shared_note = label(
+        &format!(
+            "Endereço, porta, usuário e senha valem para o dispositivo inteiro \
+             ({}). Canal {}.",
+            if siblings == 1 {
+                "1 câmera".to_string()
+            } else {
+                format!("{siblings} câmeras")
+            },
+            slot.camera.channel
+        ),
+        &["dim-label", "caption"],
+    );
+    let advanced = gtk::Expander::builder().label("Avançado").build();
+    let advanced_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(6)
+        .margin_top(6)
+        .build();
+    advanced_box.append(&label(
+        "Modelo da URL RTSP. Vazio = padrão iCSee/XMEye.",
+        &["dim-label", "caption"],
+    ));
+    advanced_box.append(&template);
+    advanced.set_child(Some(&advanced_box));
+    let status = label("", &["error-text"]);
+
+    let cancel = gtk::Button::with_label("Cancelar");
+    let save = gtk::Button::with_label("Salvar");
+    save.add_css_class("suggested-action");
+    window.set_default_widget(Some(&save));
+    let buttons = gtk::Box::builder()
+        .spacing(8)
+        .halign(gtk::Align::End)
+        .margin_top(6)
+        .build();
+    buttons.append(&cancel);
+    buttons.append(&save);
+
+    let root = content_box(10);
+    for widget in [
+        grid.upcast_ref::<gtk::Widget>(),
+        shared_note.upcast_ref(),
+        advanced.upcast_ref(),
+        status.upcast_ref(),
+        buttons.upcast_ref(),
+    ] {
+        root.append(widget);
+    }
+    window.set_child(Some(&root));
+
+    {
+        // Fraca: o botão vive dentro da janela (forte formaria um ciclo).
+        let window = window.downgrade();
+        cancel.connect_clicked(move |_| {
+            if let Some(window) = window.upgrade() {
+                window.close();
+            }
+        });
+    }
+    {
+        let dash = Rc::downgrade(dash);
+        let window = window.downgrade();
+        let status = status.clone();
+        let name = name.clone();
+        save.connect_clicked(move |_| {
+            let Some(dash) = dash.upgrade() else { return };
+            status.set_label("");
+
+            let port_text = port.text();
+            let Ok(new_port) = port_text.trim().parse::<u16>() else {
+                status.set_label(&format!("porta inválida: \"{}\"", port_text.trim()));
+                return;
+            };
+            let new_template = template.text().trim().to_string();
+            let new_template = (!new_template.is_empty() && new_template != DEFAULT_URL_TEMPLATE)
+                .then_some(new_template);
+            let new_password = password.text().to_string();
+            let new_password = (!new_password.is_empty()).then(|| Secret::new(new_password));
+
+            let connection_changed = host.text().trim() != device.host
+                || new_port != device.port
+                || user.text().trim() != device.username
+                || new_password.is_some()
+                || new_template != device.url_template;
+
+            // O nome primeiro: se a conexão mudar, as câmeras são recriadas já
+            // com o nome novo.
+            dash.rename_camera(id, &name.text());
+            if connection_changed
+                && let Err(err) = dash.update_device(
+                    &device.id,
+                    host.text().trim(),
+                    new_port,
+                    user.text().trim(),
+                    new_password,
+                    new_template,
+                )
+            {
+                status.set_label(&format!("{err:#}"));
+                return;
+            }
+            if let Some(window) = window.upgrade() {
+                window.close();
+            }
+        });
+    }
+    window.present();
+    name.grab_focus();
 }
 
 // ---------------------------------------------------------------------------
@@ -422,15 +731,20 @@ pub(super) fn show_add_device(dash: &Rc<Dashboard>, prefill: Option<Prefill>) {
     window.set_child(Some(&root));
 
     {
-        let window = window.clone();
-        cancel.connect_clicked(move |_| window.close());
+        // Fraca: o botão vive dentro da janela (forte formaria um ciclo).
+        let window = window.downgrade();
+        cancel.connect_clicked(move |_| {
+            if let Some(window) = window.upgrade() {
+                window.close();
+            }
+        });
     }
 
     {
         let dash = Rc::clone(dash);
         let form = form.clone();
         let status = status.clone();
-        let window = window.clone();
+        let window = window.downgrade();
         add.connect_clicked(move |_| {
             status.set_label("");
             let device = match form.read() {
@@ -443,11 +757,15 @@ pub(super) fn show_add_device(dash: &Rc<Dashboard>, prefill: Option<Prefill>) {
             match dash.add_device(device) {
                 Ok(0) => {
                     dash.toast("Essas câmeras já estavam cadastradas");
-                    window.close();
+                    if let Some(window) = window.upgrade() {
+                        window.close();
+                    }
                 }
                 Ok(count) => {
                     dash.toast(&format!("{} adicionada(s)", pluralize(count)));
-                    window.close();
+                    if let Some(window) = window.upgrade() {
+                        window.close();
+                    }
                 }
                 Err(err) => status.set_label(&format!("{err:#}")),
             }
