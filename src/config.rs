@@ -493,8 +493,12 @@ pub(crate) fn migrate_legacy_data_dir() {
         return;
     }
     match std::fs::rename(&old, &new) {
-        Ok(()) => tracing::info!(de = %old.display(), para = %new.display(), "dados migrados do nome antigo"),
-        Err(err) => tracing::warn!(%err, de = %old.display(), "não consegui migrar os dados antigos"),
+        Ok(()) => {
+            tracing::info!(de = %old.display(), para = %new.display(), "dados migrados do nome antigo")
+        }
+        Err(err) => {
+            tracing::warn!(%err, de = %old.display(), "não consegui migrar os dados antigos")
+        }
     }
 }
 
