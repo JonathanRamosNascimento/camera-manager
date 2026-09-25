@@ -16,7 +16,6 @@ Para o app usar, cadastre um dispositivo `127.0.0.1:8554` com o modelo de URL
 import argparse
 import socketserver
 import subprocess
-import threading
 
 # caminho → (padrão do videotestsrc, nome exibido no vídeo)
 CAMERAS = {
@@ -31,15 +30,28 @@ SDP = (
 )
 
 
+def has_element(name: str) -> bool:
+    return subprocess.run(
+        ["gst-inspect-1.0", name], capture_output=True
+    ).returncode == 0
+
+
+# Os overlays (pango) faltam em instalações mínimas; sem eles o vídeo sai sem texto.
+OVERLAYS = has_element("textoverlay") and has_element("clockoverlay")
+
+
 def pipeline(pattern: str, label: str, host: str, port: int) -> list[str]:
-    return [
-        "gst-launch-1.0", "-q",
-        "videotestsrc", "is-live=true", f"pattern={pattern}", "!",
-        "video/x-raw,width=1280,height=720,framerate=15/1", "!",
+    overlays = [
         "textoverlay", f"text={label}", "valignment=bottom", "halignment=left",
         "font-desc=Sans Bold 30", "!",
         "clockoverlay", "halignment=right", "valignment=top",
         "font-desc=Monospace Bold 22", "time-format=%d-%m-%Y %H:%M:%S", "!",
+    ] if OVERLAYS else []
+    return [
+        "gst-launch-1.0", "-q",
+        "videotestsrc", "is-live=true", f"pattern={pattern}", "!",
+        "video/x-raw,width=1280,height=720,framerate=15/1", "!",
+        *overlays,
         "x264enc", "tune=zerolatency", "speed-preset=ultrafast",
         "key-int-max=15", "bitrate=1500", "!",
         "video/x-h264,profile=baseline", "!",

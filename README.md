@@ -29,6 +29,9 @@ rustup default stable
 cargo run --release
 ```
 
+_(Arch/CachyOS. No **Ubuntu 24.04**, rode antes `tools/setup-ubuntu.sh` — veja
+[Ubuntu 24.04 e Debian](#ubuntu-2404-e-debian).)_
+
 1. O app abre **sem câmeras**, com o botão **Escanear a rede** (e **Adicionar
    manualmente**).
 2. No dispositivo encontrado, clique em **Adicionar…**, informe usuário e senha e
@@ -128,6 +131,79 @@ Verifique o ambiente sem compilar nada:
 ```sh
 gst-inspect-1.0 gtk4paintablesink rtspsrc splitmuxsink parsebin >/dev/null && echo ok
 ```
+
+> **Usa Ubuntu/Debian?** Veja [Ubuntu 24.04 e Debian](#ubuntu-2404-e-debian): lá o
+> `gtk4paintablesink` não vem em pacote e o Rust do `apt` é antigo demais, mas há um
+> script que resolve os dois.
+
+### Ubuntu 24.04 e Debian
+
+O comando `pacman` acima é do Arch. No Ubuntu 24.04 LTS há dois obstáculos, e **a
+versão do GStreamer não é um deles**:
+
+| Item | Ubuntu 24.04 | O projeto precisa | Solução |
+|---|---|---|---|
+| GStreamer | 1.24.2 | ≥ 1.14 (mínimo do sistema, exigido pelos crates `gstreamer`) | nada a fazer: **1.24 funciona** |
+| GTK4 | 4.14.5 | ≥ 4.12 | nada a fazer |
+| Rust (`apt`) | 1.75 | **≥ 1.92** (edition 2024 e crates `gtk4`/`gstreamer` recentes) | instalar via `rustup` |
+| `gtk4paintablesink` | **sem pacote** (nem `gstreamer1.0-gtk4`) | elemento obrigatório | compilar o plugin do `gst-plugins-rs` |
+
+> Os crates Rust `gstreamer 0.25` **não** exigem a biblioteca GStreamer 1.26: eles
+> compilam contra 1.14 ou mais nova e só liberam recursos extras quando a versão
+> instalada permite. O que barra o Ubuntu 24.04 são o Rust antigo e o plugin.
+
+**Caminho suportado: o script.** Como usuário comum (ele pede `sudo` só para o `apt`):
+
+```sh
+tools/setup-ubuntu.sh          # apt + rustup + plugin gtk4paintablesink (alguns minutos)
+sudo make install              # compila (como o seu usuário) e instala
+```
+
+O script: (1) instala as dependências com `apt`; (2) instala o Rust via `rustup` se
+o que houver for anterior a 1.92; (3) compila **só** o `gst-plugin-gtk4` do
+[`gst-plugins-rs`](https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs) na
+versão feita para o GStreamer 1.24 (branch `0.13`) e o instala em
+`~/.local/share/gstreamer-1.0/plugins`, onde o GStreamer procura sozinho, sem
+variável de ambiente; (4) confere `gtk4paintablesink`, `rtspsrc`, `splitmuxsink` e
+`parsebin`. É idempotente: se o elemento já existir, não recompila. Para usar
+outra versão do plugin: `GST_PLUGINS_RS_REF=<branch-ou-tag> tools/setup-ubuntu.sh`;
+se você já instalou as dependências do `apt`, `NO_APT=1 tools/setup-ubuntu.sh`.
+
+**Passo a passo manual** (o que o script faz):
+
+```sh
+sudo apt-get install -y build-essential pkg-config curl git ca-certificates \
+  libgtk-4-dev libglib2.0-dev libgraphene-1.0-dev \
+  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+  gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
+  gstreamer1.0-gl gstreamer1.0-pulseaudio gstreamer1.0-pipewire \
+  libwayland-dev libx11-dev libegl-dev libgl-dev libdrm-dev \
+  libgtk-4-bin desktop-file-utils
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y   # Rust >= 1.92
+
+git clone --depth 1 --branch 0.13 https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs.git
+(cd gst-plugins-rs && cargo build --release -p gst-plugin-gtk4)
+mkdir -p ~/.local/share/gstreamer-1.0/plugins
+install -m755 gst-plugins-rs/target/release/libgstgtk4.so ~/.local/share/gstreamer-1.0/plugins/
+
+gst-inspect-1.0 gtk4paintablesink            # deve listar o elemento
+cargo build --release && ./target/release/nvr-dashboard
+```
+
+**O que foi testado:** num Ubuntu 24.04.5 limpo (contêiner, usuário comum com
+`sudo`), o script, a compilação do app contra o GStreamer 1.24.2, `sudo make
+install` (o `target/` fica do seu usuário), `nvr-dashboard --check`, o app
+conectando a câmeras RTSP de teste com os quadros chegando ao
+`gtk4paintablesink`, e `sudo make uninstall`. **Não foi testado** em sessão
+gráfica real do Ubuntu (GNOME/Wayland), decodificação por hardware, áudio nem
+bandeja. Se algo falhar aí, abra uma issue com a saída de
+`gst-inspect-1.0 --version` e `RUST_LOG=nvr_dashboard=debug nvr-dashboard`.
+
+Debian **não foi testado**. A lógica é a mesma (Rust novo e o plugin), e se a sua
+versão já trouxer o pacote `gstreamer1.0-gtk4`, o script detecta o elemento e pula
+a compilação do plugin.
 
 ---
 
@@ -404,7 +480,8 @@ src/
     ├── snapshot.rs    captura PNG via renderer do GTK
     └── style.css      tema escuro
 tools/
-└── fake_rtsp.py    servidor RTSP de teste (padrões do GStreamer)
+├── fake_rtsp.py      servidor RTSP de teste (padrões do GStreamer)
+└── setup-ubuntu.sh   prepara o Ubuntu 24.04: apt + Rust novo + plugin gtk4paintablesink
 ```
 
 ### Pipeline por câmera
