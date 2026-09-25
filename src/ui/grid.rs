@@ -1,4 +1,5 @@
-//! Grid adaptável de câmeras.
+//! Grid dinâmico de câmeras: cards que entram e saem em tempo de execução,
+//! com divisórias arrastáveis entre eles e ordem alterável por arrastar e soltar.
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -8,8 +9,6 @@ use std::time::Duration;
 use gtk::{gdk, glib};
 use gtk::prelude::*;
 use serde::{Deserialize, Serialize};
-
-use crate::ui::camera_tile::CameraTile;
 
 /// Número de colunas para `count` câmeras.
 ///
@@ -25,49 +24,34 @@ pub fn columns_for(count: usize, configured: Option<usize>) -> usize {
     (1..).find(|c| c * c >= count).unwrap_or(1)
 }
 
-/// Layout persistido: fração da posição de cada divisória (na ordem de criação).
+/// Layout persistido: fração da posição de cada divisória (na ordem de criação)
+/// e a ordem das câmeras.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct SavedLayout {
-    /// Formato das frações; muda quando a montagem dos painéis muda.
+    /// Formato do arquivo; muda quando a montagem dos painéis ou a ordem mudam.
     #[serde(default)]
     version: u32,
     columns: usize,
     count: usize,
     fractions: Vec<f64>,
-    /// `order[posição] = índice da câmera` exibida naquela posição do grid.
+    /// Chaves das câmeras (`<dispositivo>/<canal>`) na ordem de exibição.
     #[serde(default)]
-    order: Vec<usize>,
+    order: Vec<String>,
 }
 
-/// Versão atual: 2 = linhas incompletas são completadas com espaços vazios.
-const LAYOUT_VERSION: u32 = 2;
+/// Versão atual: 3 = ordem por chave de câmera (antes era por índice).
+const LAYOUT_VERSION: u32 = 3;
 
 fn layout_path() -> Option<PathBuf> {
     crate::config::user_config_dir().map(|dir| dir.join("nvr-dashboard").join("layout.toml"))
 }
 
-fn load_layout(columns: usize, count: usize) -> SavedLayout {
-    let saved = layout_path()
+fn load_layout() -> SavedLayout {
+    layout_path()
         .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|text| toml::from_str::<SavedLayout>(&text).ok());
-    // Mudou o nº de câmeras ou de colunas: as frações antigas não valem.
-    let mut layout = match saved {
-        Some(layout)
-            if layout.version == LAYOUT_VERSION
-                && layout.columns == columns
-                && layout.count == count =>
-        {
-            layout
-        }
-        _ => SavedLayout::default(),
-    };
-    // A ordem só vale se for uma permutação de 0..count.
-    let mut sorted = layout.order.clone();
-    sorted.sort_unstable();
-    if !sorted.iter().copied().eq(0..count) {
-        layout.order = (0..count).collect();
-    }
-    layout
+        .and_then(|text| toml::from_str::<SavedLayout>(&text).ok())
+        .filter(|layout| layout.version == LAYOUT_VERSION)
+        .unwrap_or_default()
 }
 
 fn save_layout(layout: &SavedLayout) {
@@ -81,15 +65,26 @@ fn save_layout(layout: &SavedLayout) {
     }
 }
 
-/// Estado compartilhado pelo grid: ordem, frações, e a árvore de painéis atual.
+/// Um card no grid.
+struct Entry {
+    /// Chave estável entre execuções (`<dispositivo>/<canal>`).
+    key: String,
+    /// Id da câmera nesta execução.
+    id: usize,
+    widget: gtk::Widget,
+}
+
+/// Estado compartilhado: entradas, frações, e a árvore de painéis atual.
 struct Shared {
-    columns: usize,
-    count: usize,
-    /// Um widget por câmera, indexado pelo id da câmera.
-    tiles: Vec<gtk::Widget>,
-    /// `order[posição] = índice da câmera`.
-    order: RefCell<Vec<usize>>,
+    configured_columns: Option<usize>,
+    /// Entradas na ordem de exibição.
+    entries: RefCell<Vec<Entry>>,
+    /// Ordem salva; cameras novas (fora da lista) entram no fim.
+    order: RefCell<Vec<String>>,
+    /// Frações das divisórias, alinhadas por slot.
     fractions: RefCell<Vec<f64>>,
+    /// `(colunas, câmeras)` a que `fractions` se refere.
+    shape: Cell<(usize, usize)>,
     /// Contêiner fixo onde a árvore de painéis é (re)montada.
     host: gtk::Box,
     paneds: RefCell<Vec<gtk::Paned>>,
@@ -97,6 +92,10 @@ struct Shared {
 }
 
 impl Shared {
+    fn columns(&self) -> usize {
+        columns_for(self.entries.borrow().len(), self.configured_columns)
+    }
+
     /// Salva 500 ms depois da última mudança, para não gravar a cada pixel.
     fn schedule_save(self: &Rc<Self>) {
         let generation = self.save_generation.get() + 1;
@@ -104,20 +103,33 @@ impl Shared {
         let this = Rc::clone(self);
         glib::timeout_add_local_once(Duration::from_millis(500), move || {
             if this.save_generation.get() == generation {
+                let (columns, count) = this.shape.get();
                 save_layout(&SavedLayout {
                     version: LAYOUT_VERSION,
-                    columns: this.columns,
-                    count: this.count,
+                    columns,
+                    count,
                     fractions: this.fractions.borrow().clone(),
-                    order: this.order.borrow().clone(),
+                    order: this.entries.borrow().iter().map(|e| e.key.clone()).collect(),
                 });
             }
         });
     }
 
+    /// Ordena as entradas conforme a ordem salva; as desconhecidas ficam no fim,
+    /// na ordem em que chegaram.
+    fn sort_entries(&self) {
+        let order = self.order.borrow();
+        self.entries.borrow_mut().sort_by_key(|entry| {
+            order
+                .iter()
+                .position(|key| *key == entry.key)
+                .unwrap_or(usize::MAX)
+        });
+    }
+
     /// (Re)monta a árvore de painéis na ordem atual.
     ///
-    /// Os tiles são soltos dos painéis antigos antes de serem reaproveitados;
+    /// Os cards são soltos dos painéis antigos antes de serem reaproveitados;
     /// as frações ficam presas ao *slot*, então cada slot mantém seu tamanho.
     fn render(self: &Rc<Self>) {
         for paned in self.paneds.borrow_mut().drain(..) {
@@ -128,24 +140,34 @@ impl Shared {
             self.host.remove(&child);
         }
 
+        let count = self.entries.borrow().len();
+        if count == 0 {
+            return;
+        }
+        let columns = self.columns();
+        // Mudou o nº de câmeras ou de colunas: as frações antigas não valem e
+        // todo card volta ao mesmo tamanho.
+        if self.shape.get() != (columns, count) {
+            self.shape.set((columns, count));
+            self.fractions.borrow_mut().clear();
+        }
+
         let ordered: Vec<gtk::Widget> = self
-            .order
+            .entries
             .borrow()
             .iter()
-            .map(|&id| self.tiles[id].clone())
+            .map(|entry| entry.widget.clone())
             .collect();
         let index = Cell::new(0);
-        // Divisórias das linhas primeiro, depois a vertical: a ordem precisa ser
-        // sempre a mesma para as frações salvas casarem.
         // A última linha é completada com espaços vazios: assim, na primeira
         // abertura, todo card tem o mesmo tamanho (um card sozinho não se
         // estica pela linha inteira). O usuário pode arrastar a divisória
         // para ocupar o espaço.
         let rows: Vec<gtk::Widget> = ordered
-            .chunks(self.columns)
+            .chunks(columns)
             .map(|row| {
                 let mut cells = row.to_vec();
-                while cells.len() < self.columns {
+                while cells.len() < columns {
                     cells.push(
                         gtk::Box::builder()
                             .hexpand(true)
@@ -167,24 +189,23 @@ impl Shared {
             return;
         }
         {
-            let mut order = self.order.borrow_mut();
+            let mut entries = self.entries.borrow_mut();
             let (Some(a), Some(b)) = (
-                order.iter().position(|&id| id == from),
-                order.iter().position(|&id| id == to),
+                entries.iter().position(|e| e.id == from),
+                entries.iter().position(|e| e.id == to),
             ) else {
                 return;
             };
-            order.swap(a, b);
+            entries.swap(a, b);
+            *self.order.borrow_mut() = entries.iter().map(|e| e.key.clone()).collect();
         }
         self.render();
         self.schedule_save();
     }
 }
 
-/// Permite arrastar `tile` (pelo id) e soltar sobre outro para trocar os dois.
-fn enable_reordering(shared: &Rc<Shared>, id: usize) {
-    let tile = &shared.tiles[id];
-
+/// Permite arrastar o card da câmera `id` e soltar sobre outro para trocar os dois.
+fn enable_reordering(shared: &Rc<Shared>, id: usize, tile: &gtk::Widget) {
     let source = gtk::DragSource::builder()
         .actions(gdk::DragAction::MOVE)
         .content(&gdk::ContentProvider::for_value(&(id as u32).to_value()))
@@ -192,12 +213,9 @@ fn enable_reordering(shared: &Rc<Shared>, id: usize) {
     source.connect_drag_begin(|source, drag| {
         if let Some(widget) = source.widget() {
             let icon = gtk::WidgetPaintable::new(Some(&widget));
-            gtk::DragIcon::for_drag(drag)
-                .downcast::<gtk::DragIcon>()
-                .ok()
-                .map(|icon_widget| {
-                    icon_widget.set_child(Some(&gtk::Picture::for_paintable(&icon)));
-                });
+            if let Ok(icon_widget) = gtk::DragIcon::for_drag(drag).downcast::<gtk::DragIcon>() {
+                icon_widget.set_child(Some(&gtk::Picture::for_paintable(&icon)));
+            }
         }
     });
     tile.add_controller(source);
@@ -215,7 +233,9 @@ fn enable_reordering(shared: &Rc<Shared>, id: usize) {
         target.connect_leave(move |_| tile.remove_css_class("drop-target"));
     }
     {
-        let shared = Rc::clone(shared);
+        // Referência fraca: o controlador vive dentro do card, que o `Shared`
+        // segura — uma forte formaria um ciclo que impediria a liberação.
+        let shared = Rc::downgrade(shared);
         let tile = tile.clone();
         target.connect_drop(move |_, value, _, _| {
             tile.remove_css_class("drop-target");
@@ -224,8 +244,12 @@ fn enable_reordering(shared: &Rc<Shared>, id: usize) {
             };
             // Adiado: montar a árvore de novo dentro do próprio evento de drop
             // desparentaria o widget que ainda está tratando o evento.
-            let shared = Rc::clone(&shared);
-            glib::idle_add_local_once(move || shared.swap(from as usize, id));
+            let shared = shared.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(shared) = shared.upgrade() {
+                    shared.swap(from as usize, id);
+                }
+            });
             true
         });
     }
@@ -291,7 +315,8 @@ fn nest(
             if size > 0 && size != last_size.get() {
                 last_size.set(size);
                 applying.set(true);
-                paned.set_position((size as f64 * shared.fractions.borrow()[slot]).round() as i32);
+                let fraction = shared.fractions.borrow().get(slot).copied().unwrap_or(0.5);
+                paned.set_position((size as f64 * fraction).round() as i32);
                 applying.set(false);
             }
             glib::ControlFlow::Continue
@@ -309,7 +334,9 @@ fn nest(
                 return;
             }
             let fraction = (paned.position() as f64 / size as f64).clamp(0.05, 0.95);
-            shared.fractions.borrow_mut()[slot] = fraction;
+            if let Some(saved) = shared.fractions.borrow_mut().get_mut(slot) {
+                *saved = fraction;
+            }
             shared.schedule_save();
         });
     }
@@ -317,36 +344,61 @@ fn nest(
     paned.upcast()
 }
 
-/// Monta a grade de câmeras com divisórias arrastáveis entre os tiles.
+/// Grade de câmeras com divisórias arrastáveis entre os cards.
 ///
-/// Linhas e colunas seguem o mesmo cálculo de [`columns_for`]. Arrastar um tile
-/// sobre outro troca os dois de lugar. Proporções e ordem escolhidas pelo
-/// usuário são salvas em `<config>/nvr-dashboard/layout.toml`.
-pub fn build(tiles: &[CameraTile], configured_columns: Option<usize>) -> gtk::Widget {
-    let columns = columns_for(tiles.len(), configured_columns);
-    let saved = load_layout(columns, tiles.len());
+/// Linhas e colunas seguem [`columns_for`]. Arrastar um card sobre outro troca
+/// os dois de lugar. Proporções e ordem escolhidas pelo usuário são salvas em
+/// `<config>/nvr-dashboard/layout.toml`.
+pub struct GridView {
+    shared: Rc<Shared>,
+}
 
-    let host = gtk::Box::builder()
-        .css_classes(["camera-grid"])
-        .hexpand(true)
-        .vexpand(true)
-        .build();
-    let shared = Rc::new(Shared {
-        columns,
-        count: tiles.len(),
-        tiles: tiles.iter().map(|t| t.widget().clone().upcast()).collect(),
-        order: RefCell::new(saved.order),
-        fractions: RefCell::new(saved.fractions),
-        host: host.clone(),
-        paneds: RefCell::new(Vec::new()),
-        save_generation: Cell::new(0),
-    });
-
-    for id in 0..tiles.len() {
-        enable_reordering(&shared, id);
+impl GridView {
+    pub fn new(configured_columns: Option<usize>) -> Self {
+        let saved = load_layout();
+        let host = gtk::Box::builder()
+            .css_classes(["camera-grid"])
+            .hexpand(true)
+            .vexpand(true)
+            .build();
+        let shape = (saved.columns, saved.count);
+        Self {
+            shared: Rc::new(Shared {
+                configured_columns,
+                entries: RefCell::new(Vec::new()),
+                order: RefCell::new(saved.order),
+                fractions: RefCell::new(saved.fractions),
+                shape: Cell::new(shape),
+                host,
+                paneds: RefCell::new(Vec::new()),
+                save_generation: Cell::new(0),
+            }),
+        }
     }
-    shared.render();
-    host.upcast()
+
+    pub fn widget(&self) -> gtk::Widget {
+        self.shared.host.clone().upcast()
+    }
+
+    /// Acrescenta um card. `key` identifica a câmera entre execuções.
+    pub fn add(&self, key: String, id: usize, widget: gtk::Widget) {
+        enable_reordering(&self.shared, id, &widget);
+        self.shared.entries.borrow_mut().push(Entry { key, id, widget });
+        self.shared.sort_entries();
+        self.shared.render();
+    }
+
+    /// Tira o card da câmera `id`. As demais mantêm ordem e posição relativa.
+    pub fn remove(&self, id: usize) {
+        self.shared.entries.borrow_mut().retain(|e| e.id != id);
+        self.shared.render();
+        self.shared.schedule_save();
+    }
+
+    /// Ids das câmeras na ordem de exibição (esquerda→direita, cima→baixo).
+    pub fn ids(&self) -> Vec<usize> {
+        self.shared.entries.borrow().iter().map(|e| e.id).collect()
+    }
 }
 
 #[cfg(test)]

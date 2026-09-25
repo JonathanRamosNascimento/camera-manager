@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use gtk::glib;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Template padrão de URL RTSP do NVR iCSee/XMEye (firmware Hi3520).
 pub const DEFAULT_URL_TEMPLATE: &str = "rtsp://{user_enc}:{password_enc}@{host}:{port}\
@@ -38,11 +38,15 @@ const OUTPUT_SUBDIR: &str = "nvr-dashboard";
 ///
 /// O valor em claro só sai por [`Secret::expose`], o que torna trivial auditar
 /// (`grep expose()`) todos os pontos em que a senha é realmente usada.
-#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct Secret(String);
 
 impl Secret {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
     /// Devolve a senha em claro. Use apenas para montar a URL entregue ao GStreamer.
     pub fn expose(&self) -> &str {
         &self.0
@@ -72,16 +76,17 @@ impl fmt::Display for Secret {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// Forma simples: um único gravador.
+    /// Legado: gravadores agora são cadastrados pela interface (`store`). Os
+    /// blocos continuam sendo aceitos para não quebrar arquivos antigos, mas
+    /// são ignorados — ver [`Config::ignored_legacy_blocks`].
     #[serde(default)]
-    pub nvr: Option<Nvr>,
-    /// Forma múltipla: vários gravadores no mesmo dashboard.
+    nvr: Option<toml::Table>,
     #[serde(default)]
-    pub nvrs: Vec<Nvr>,
+    nvrs: Vec<toml::Table>,
+    #[serde(default)]
+    cameras: Vec<toml::Table>,
     #[serde(default)]
     pub app: App,
-    #[serde(default)]
-    pub cameras: Vec<CameraEntry>,
     #[serde(default)]
     pub snapshots: Snapshots,
     #[serde(default)]
@@ -90,34 +95,6 @@ pub struct Config {
     pub motion: Motion,
     #[serde(default)]
     pub notifications: Notifications,
-}
-
-/// Dados de conexão de um gravador.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Nvr {
-    /// Identificador citado em `cameras.nvr`. Padrão: o próprio `host`.
-    #[serde(default)]
-    pub id: Option<String>,
-    /// IP ou hostname do NVR na rede local.
-    pub host: String,
-    #[serde(default = "default_rtsp_port")]
-    pub rtsp_port: u16,
-    pub username: String,
-    pub password: Secret,
-    /// Template da URL RTSP. Placeholders suportados:
-    /// `{host}`, `{port}`, `{channel}`, `{stream}`,
-    /// `{user}` / `{password}` (literais) e
-    /// `{user_enc}` / `{password_enc}` (percent-encoded, para o userinfo).
-    #[serde(default = "default_url_template")]
-    pub url_template: String,
-}
-
-impl Nvr {
-    /// Identificador efetivo: o `id` explícito ou o host.
-    pub fn id(&self) -> &str {
-        self.id.as_deref().unwrap_or(&self.host)
-    }
 }
 
 /// Ajustes de comportamento do dashboard.
@@ -173,22 +150,6 @@ pub struct App {
     /// Índice do substream usado quando `adaptive_stream` está ligado.
     #[serde(default = "default_substream_index")]
     pub substream_index: u8,
-}
-
-/// Uma câmera (um canal de um NVR).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CameraEntry {
-    pub name: String,
-    pub channel: u32,
-    /// `0` = stream principal (alta qualidade); `1` = substream.
-    #[serde(default)]
-    pub stream: u8,
-    /// `id` do NVR desta câmera. Opcional quando só existe um gravador.
-    #[serde(default)]
-    pub nvr: Option<String>,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
 }
 
 /// Onde as capturas de tela (PNG) são gravadas.
@@ -311,12 +272,6 @@ impl Default for Notifications {
     }
 }
 
-fn default_rtsp_port() -> u16 {
-    554
-}
-fn default_url_template() -> String {
-    DEFAULT_URL_TEMPLATE.to_string()
-}
 fn default_latency_ms() -> u32 {
     200
 }
@@ -366,9 +321,6 @@ fn default_true() -> bool {
 
 impl Config {
     /// Lê e valida o TOML no caminho informado.
-    ///
-    /// Emite um aviso (sem falhar) se o arquivo estiver legível por outros
-    /// usuários, já que ele guarda a senha do NVR.
     pub fn load(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)
             .with_context(|| format!("não consegui ler {}", path.display()))?;
@@ -381,16 +333,18 @@ impl Config {
         Ok(config)
     }
 
-    /// Descobre qual arquivo de configuração usar.
+    /// Carrega a configuração de ajustes. Sem arquivo, usa os padrões: o app
+    /// funciona só com o cadastro de câmeras feito pela interface.
     ///
-    /// Ordem: caminho explícito (`--config`) → `$NVR_DASHBOARD_CONFIG` →
-    /// `./config/cameras.toml` → `$XDG_CONFIG_HOME/nvr-dashboard/cameras.toml`.
-    pub fn resolve_path(explicit: Option<PathBuf>) -> Result<PathBuf> {
+    /// Ordem: caminho explícito (`--config`, obrigatório existir) →
+    /// `$NVR_DASHBOARD_CONFIG` → `./config/cameras.toml` →
+    /// `$XDG_CONFIG_HOME/nvr-dashboard/cameras.toml`.
+    pub fn discover(explicit: Option<PathBuf>) -> Result<(Self, Option<PathBuf>)> {
         if let Some(path) = explicit {
             if !path.is_file() {
                 bail!("arquivo de configuração não encontrado: {}", path.display());
             }
-            return Ok(path);
+            return Ok((Self::load(&path)?, Some(path)));
         }
 
         let mut candidates = Vec::new();
@@ -402,79 +356,23 @@ impl Config {
             candidates.push(dir.join(OUTPUT_SUBDIR).join(CONFIG_FILE_NAME));
         }
 
-        if let Some(found) = candidates.iter().find(|p| p.is_file()) {
-            return Ok(found.clone());
+        match candidates.into_iter().find(|p| p.is_file()) {
+            Some(path) => Ok((Self::load(&path)?, Some(path))),
+            None => {
+                let config: Config = toml::from_str("")?;
+                config.validate()?;
+                Ok((config, None))
+            }
         }
-
-        let tried = candidates
-            .iter()
-            .map(|p| format!("  - {}", p.display()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        bail!(
-            "nenhum arquivo de configuração encontrado. Caminhos tentados:\n{tried}\n\n\
-             Copie o template e preencha as credenciais:\n  \
-             cp config/cameras.example.toml config/{CONFIG_FILE_NAME}\n  \
-             chmod 600 config/{CONFIG_FILE_NAME}"
-        );
     }
 
-    /// Todos os gravadores, na ordem: `[nvr]` primeiro, depois `[[nvrs]]`.
-    pub fn all_nvrs(&self) -> Vec<&Nvr> {
-        self.nvr.iter().chain(self.nvrs.iter()).collect()
-    }
-
-    /// Localiza o gravador de uma câmera.
-    ///
-    /// Sem `nvr = "..."` explícito só há resposta quando existe um único
-    /// gravador — com vários, omitir seria ambíguo.
-    pub fn nvr_for(&self, entry: &CameraEntry) -> Result<&Nvr> {
-        let nvrs = self.all_nvrs();
-        match &entry.nvr {
-            Some(id) => nvrs
-                .into_iter()
-                .find(|nvr| nvr.id() == id)
-                .with_context(|| {
-                    format!(
-                        "câmera `{}` referencia o NVR `{id}`, que não existe",
-                        entry.name
-                    )
-                }),
-            None if nvrs.len() == 1 => Ok(nvrs[0]),
-            None => bail!(
-                "câmera `{}` precisa de `nvr = \"<id>\"`: há {} gravadores configurados",
-                entry.name,
-                nvrs.len()
-            ),
-        }
+    /// Quantos blocos `[nvr]`/`[[nvrs]]`/`[[cameras]]` o arquivo trazia. Eles
+    /// não são mais carregados: as câmeras vivem no cadastro da interface.
+    pub fn ignored_legacy_blocks(&self) -> usize {
+        usize::from(self.nvr.is_some()) + self.nvrs.len() + self.cameras.len()
     }
 
     fn validate(&self) -> Result<()> {
-        let nvrs = self.all_nvrs();
-        if nvrs.is_empty() {
-            bail!("nenhum gravador configurado — adicione um bloco `[nvr]`");
-        }
-
-        let mut seen = Vec::with_capacity(nvrs.len());
-        for nvr in &nvrs {
-            if nvr.host.trim().is_empty() {
-                bail!("`nvr.host` não pode ser vazio");
-            }
-            if nvr.username.trim().is_empty() {
-                bail!("`nvr.username` não pode ser vazio (NVR `{}`)", nvr.id());
-            }
-            if nvr.password.is_empty() {
-                bail!("`nvr.password` não pode ser vazio (NVR `{}`)", nvr.id());
-            }
-            if nvr.url_template.trim().is_empty() {
-                bail!("`nvr.url_template` não pode ser vazio (NVR `{}`)", nvr.id());
-            }
-            if seen.contains(&nvr.id()) {
-                bail!("dois gravadores com o mesmo id `{}`", nvr.id());
-            }
-            seen.push(nvr.id());
-        }
-
         if self.app.reconnect_initial_secs == 0 {
             bail!("`app.reconnect_initial_secs` precisa ser >= 1");
         }
@@ -503,20 +401,7 @@ impl Config {
             bail!("`motion.sensitivity` precisa estar entre 0.0 e 1.0");
         }
 
-        if self.enabled_cameras().next().is_none() {
-            bail!("nenhuma câmera habilitada — adicione ao menos um bloco `[[cameras]]`");
-        }
-        for camera in self.enabled_cameras() {
-            if camera.name.trim().is_empty() {
-                bail!("câmera do canal {} está sem `name`", camera.channel);
-            }
-            self.nvr_for(camera)?;
-        }
         Ok(())
-    }
-
-    pub fn enabled_cameras(&self) -> impl Iterator<Item = &CameraEntry> {
-        self.cameras.iter().filter(|c| c.enabled)
     }
 
     /// Diretório das capturas PNG, com `~` expandido.
@@ -585,17 +470,6 @@ fn warn_on_loose_permissions(path: &Path) {
 mod tests {
     use super::*;
 
-    const MINIMAL: &str = r#"
-        [nvr]
-        host = "192.168.77.30"
-        username = "admin"
-        password = "hunter2"
-
-        [[cameras]]
-        name = "Portão"
-        channel = 1
-    "#;
-
     fn parse(raw: &str) -> Result<Config> {
         let config: Config = toml::from_str(raw)?;
         config.validate()?;
@@ -603,12 +477,8 @@ mod tests {
     }
 
     #[test]
-    fn aplica_valores_padrao() {
-        let config = parse(MINIMAL).expect("config mínima deve ser válida");
-        let nvr = config.all_nvrs()[0];
-        assert_eq!(nvr.rtsp_port, 554);
-        assert_eq!(nvr.url_template, DEFAULT_URL_TEMPLATE);
-        assert_eq!(nvr.id(), "192.168.77.30", "id cai no host");
+    fn arquivo_vazio_usa_valores_padrao() {
+        let config = parse("").expect("config vazia deve ser válida");
         assert_eq!(config.app.latency_ms, 200);
         assert_eq!(config.app.rtsp_protocols, "tcp");
         assert_eq!(config.app.grid_columns, None);
@@ -617,76 +487,68 @@ mod tests {
         assert_eq!(config.app.substream_index, 1);
         assert!(config.app.wait_for_keyframe);
         assert_eq!(config.app.keyframe_timeout_secs, 90);
-        assert_eq!(config.cameras[0].stream, 0);
-        assert!(config.cameras[0].enabled);
         assert_eq!(config.recording.container, "mkv");
         assert!(!config.motion.enabled);
         assert!(config.notifications.enabled);
+        assert_eq!(config.ignored_legacy_blocks(), 0);
     }
 
     #[test]
-    fn senha_nunca_aparece_em_claro() {
-        let config = parse(MINIMAL).unwrap();
-        let debug = format!("{config:?}");
-        assert!(!debug.contains("hunter2"), "senha vazou em Debug: {debug}");
-        assert!(debug.contains(MASK));
-        assert_eq!(format!("{}", config.all_nvrs()[0].password), MASK);
-        assert_eq!(config.all_nvrs()[0].password.expose(), "hunter2");
+    fn blocos_antigos_de_nvr_e_cameras_sao_aceitos_e_ignorados() {
+        let raw = r#"
+            [nvr]
+            host = "192.168.77.30"
+            username = "admin"
+            password = "hunter2"
+
+            [[cameras]]
+            name = "Portão"
+            channel = 1
+
+            [[cameras]]
+            name = "Fundos"
+            channel = 2
+        "#;
+        let config = parse(raw).expect("arquivos antigos não podem quebrar");
+        assert_eq!(config.ignored_legacy_blocks(), 3);
     }
 
     #[test]
     fn campo_desconhecido_e_erro() {
-        let raw = format!("{MINIMAL}\n[app]\nlatencia_ms = 300\n");
-        let err = parse(&raw).unwrap_err().to_string();
+        let err = parse("[app]\nlatencia_ms = 300\n").unwrap_err().to_string();
         assert!(err.contains("latencia_ms"), "erro inesperado: {err}");
     }
 
     #[test]
-    fn exige_ao_menos_uma_camera_habilitada() {
-        let raw = format!("{MINIMAL}enabled = false\n");
-        let err = parse(&raw).unwrap_err().to_string();
-        assert!(err.contains("nenhuma câmera habilitada"), "erro: {err}");
-    }
-
-    #[test]
     fn rejeita_backoff_invertido() {
-        let raw =
-            format!("{MINIMAL}\n[app]\nreconnect_initial_secs = 30\nreconnect_max_secs = 5\n");
-        let err = parse(&raw).unwrap_err().to_string();
+        let raw = "[app]\nreconnect_initial_secs = 30\nreconnect_max_secs = 5\n";
+        let err = parse(raw).unwrap_err().to_string();
         assert!(err.contains("reconnect_max_secs"), "erro: {err}");
     }
 
     #[test]
-    fn rejeita_host_vazio() {
-        let raw = MINIMAL.replace("192.168.77.30", "");
-        let err = parse(&raw).unwrap_err().to_string();
-        assert!(err.contains("nvr.host"), "erro: {err}");
-    }
-
-    #[test]
     fn rejeita_container_desconhecido() {
-        let raw = format!("{MINIMAL}\n[recording]\ncontainer = \"avi\"\n");
-        let err = parse(&raw).unwrap_err().to_string();
+        let err = parse("[recording]\ncontainer = \"avi\"\n").unwrap_err().to_string();
         assert!(err.contains("recording.container"), "erro: {err}");
     }
 
     #[test]
     fn rejeita_sensibilidade_fora_da_faixa() {
-        let raw = format!("{MINIMAL}\n[motion]\nsensitivity = 1.5\n");
-        let err = parse(&raw).unwrap_err().to_string();
+        let err = parse("[motion]\nsensitivity = 1.5\n").unwrap_err().to_string();
         assert!(err.contains("motion.sensitivity"), "erro: {err}");
+    }
+
+    #[test]
+    fn segredo_nunca_aparece_em_claro() {
+        let secret = Secret::new("hunter2");
+        assert_eq!(format!("{secret:?}"), MASK);
+        assert_eq!(format!("{secret}"), MASK);
+        assert_eq!(secret.expose(), "hunter2");
     }
 
     #[test]
     fn le_configuracao_completa() {
         let raw = r#"
-            [nvr]
-            host = "10.0.0.5"
-            rtsp_port = 8554
-            username = "operador"
-            password = "s3nh@"
-            url_template = "rtsp://{host}:{port}/ch{channel}"
-
             [app]
             latency_ms = 400
             grid_columns = 3
@@ -717,93 +579,18 @@ mod tests {
             enabled = false
             offline_after_attempts = 5
             tray = false
-
-            [[cameras]]
-            name = "Frente"
-            channel = 1
-            stream = 1
-
-            [[cameras]]
-            name = "Fundos"
-            channel = 2
-            enabled = false
         "#;
         let config = parse(raw).unwrap();
-        assert_eq!(config.all_nvrs()[0].rtsp_port, 8554);
         assert_eq!(config.app.grid_columns, Some(3));
         assert!(!config.app.hardware_decoding);
         assert!(config.app.adaptive_stream);
         assert_eq!(config.app.substream_index, 2);
         assert!(!config.app.wait_for_keyframe);
         assert_eq!(config.app.keyframe_timeout_secs, 45);
-        assert_eq!(config.cameras.len(), 2);
-        assert_eq!(config.enabled_cameras().count(), 1);
-        assert_eq!(config.cameras[0].stream, 1);
         assert_eq!(config.recording.max_files, 10);
         assert!(config.motion.notify);
         assert!(!config.notifications.tray);
         assert!(config.recording_dir().ends_with("gravacoes"));
-    }
-
-    // -- múltiplos NVRs -----------------------------------------------------
-
-    const DOIS_NVRS: &str = r#"
-        [nvr]
-        id = "casa"
-        host = "192.168.77.30"
-        username = "admin"
-        password = "a"
-
-        [[nvrs]]
-        id = "loja"
-        host = "192.168.9.10"
-        username = "admin"
-        password = "b"
-
-        [[cameras]]
-        name = "Portão"
-        channel = 1
-        nvr = "casa"
-
-        [[cameras]]
-        name = "Caixa"
-        channel = 1
-        nvr = "loja"
-    "#;
-
-    #[test]
-    fn resolve_cameras_de_varios_nvrs() {
-        let config = parse(DOIS_NVRS).unwrap();
-        assert_eq!(config.all_nvrs().len(), 2);
-        assert_eq!(
-            config.nvr_for(&config.cameras[0]).unwrap().host,
-            "192.168.77.30"
-        );
-        assert_eq!(
-            config.nvr_for(&config.cameras[1]).unwrap().host,
-            "192.168.9.10"
-        );
-    }
-
-    #[test]
-    fn com_varios_nvrs_a_camera_precisa_dizer_qual() {
-        let raw = DOIS_NVRS.replace("        nvr = \"casa\"\n", "");
-        let err = parse(&raw).unwrap_err().to_string();
-        assert!(err.contains("precisa de `nvr"), "erro: {err}");
-    }
-
-    #[test]
-    fn rejeita_referencia_a_nvr_inexistente() {
-        let raw = DOIS_NVRS.replace("nvr = \"loja\"", "nvr = \"fazenda\"");
-        let err = parse(&raw).unwrap_err().to_string();
-        assert!(err.contains("fazenda"), "erro: {err}");
-    }
-
-    #[test]
-    fn rejeita_ids_duplicados() {
-        let raw = DOIS_NVRS.replace("id = \"loja\"", "id = \"casa\"");
-        let err = parse(&raw).unwrap_err().to_string();
-        assert!(err.contains("mesmo id"), "erro: {err}");
     }
 
     #[test]

@@ -1,7 +1,8 @@
 # nvr-dashboard
 
 Dashboard nativo para Linux (Rust + GTK4 + GStreamer) que mostra ao vivo, num
-grid, as câmeras de um NVR iCSee/XMEye (firmware Hi3520) via RTSP — com
+grid, as câmeras de um NVR iCSee/XMEye (firmware Hi3520) ou câmeras IP via
+RTSP — cadastradas pela própria janela, manualmente ou escaneando a rede — com
 reconexão automática, captura de tela, gravação sob demanda, detecção de
 movimento e ícone na bandeja.
 
@@ -30,6 +31,13 @@ gravação em cada tile._
 
 ## Recursos
 
+**Cadastro de câmeras**
+
+- Abre **vazio** na primeira execução, com botões para escanear a rede ou adicionar manualmente
+- Escaneia a sub-rede (porta RTSP 554 + ONVIF/WS-Discovery) e lista o que encontrar
+- "Detectar canais" testa os canais 1–8 do dispositivo e marca só os que têm imagem
+- Lista de câmeras (botão **Câmeras** na barra de título) para adicionar e remover, sem reiniciar o app
+
 **Visualização**
 
 - Grid adaptável: 1 câmera → 1×1, 2–4 → 2×2, 5–9 → 3×3 (ou colunas fixas por configuração)
@@ -57,7 +65,7 @@ gravação em cada tile._
 - Ícone na bandeja (StatusNotifierItem) com resumo e menu
 - Cards redimensionáveis (arrastando as divisórias) e reordenáveis (arrastando o card); layout salvo entre execuções
 - Substream no grid e stream principal em tela cheia (`adaptive_stream`), para poupar CPU e banda
-- Vários NVRs no mesmo dashboard
+- Vários NVRs / câmeras IP no mesmo dashboard
 
 ---
 
@@ -111,58 +119,70 @@ Depois disso o app aparece no menu do GNOME. Para remover: `sudo make uninstall`
 
 ## Configuração
 
+Há dois arquivos, com papéis diferentes:
+
+| Arquivo | O que guarda | Quem edita |
+|---|---|---|
+| `~/.config/nvr-dashboard/devices.toml` | **Câmeras** e credenciais | O app (janela de cadastro) |
+| `cameras.toml` | **Ajustes** do app (`[app]`, `[recording]`, `[motion]`…) | Você, opcional |
+
+### Cadastrar câmeras (pela janela)
+
+Na primeira execução o app abre sem câmeras. Use:
+
+- **Escanear a rede** — varre a sub-rede da máquina (`/24`, editável) procurando a
+  porta RTSP 554 aberta e câmeras ONVIF. Clique em **Adicionar…** no dispositivo
+  encontrado, informe usuário e senha e use **Detectar canais**.
+- **Adicionar manualmente** — endereço, porta, usuário, senha e canais (`1-3`,
+  `1,2,5`…). Em **Avançado** dá para trocar o modelo da URL RTSP.
+- **Câmeras** (barra de título) — lista as câmeras, com **Remover**, e atalhos para
+  as duas opções acima.
+
+**Detectar canais:** muitos NVRs aceitam a sessão RTSP até para canais que não
+existem, então "conectou" não prova nada. O teste só considera um canal vivo se
+chegar **vídeo** (até 8 s por canal). Um canal sem imagem pode ser câmera
+offline, canal vazio, ou uma falha momentânea do NVR — se algum canal esperado
+aparecer como "sem imagem", rode a detecção de novo.
+
+Cada canal vira um card. Se o `host:porta` já existe, o app só acrescenta os
+canais que faltam (e atualiza o login).
+
+`devices.toml` é gravado com permissão `600` porque guarda as senhas em texto
+(o mesmo cuidado que o `cameras.toml` sempre teve). Para outro caminho, use
+`$NVR_DASHBOARD_DEVICES`. Se o arquivo ficar ilegível, ele é movido para
+`devices.toml.bak` e o app abre vazio, em vez de sobrescrevê-lo.
+
+### Ajustes (`cameras.toml`, opcional)
+
 ```sh
 cp config/cameras.example.toml config/cameras.toml
 chmod 600 config/cameras.toml
 $EDITOR config/cameras.toml
 ```
 
-`config/cameras.toml` está no `.gitignore` e **nunca** deve ser versionado. O
-programa avisa no log se o arquivo estiver acessível a outros usuários.
-
-O arquivo é procurado nesta ordem:
+`config/cameras.toml` está no `.gitignore`. O arquivo é procurado nesta ordem;
+sem nenhum, valem os padrões:
 
 1. `--config <ARQUIVO>`
 2. `$NVR_DASHBOARD_CONFIG`
 3. `./config/cameras.toml`
 4. `$XDG_CONFIG_HOME/nvr-dashboard/cameras.toml`
 
-Só `[nvr]` e `[[cameras]]` são obrigatórios. Todas as chaves estão comentadas em
-[`config/cameras.example.toml`](config/cameras.example.toml); o resumo:
+> **Migração:** versões anteriores liam `[nvr]`, `[[nvrs]]` e `[[cameras]]` deste
+> arquivo. Esses blocos ainda são aceitos (não quebram), mas **ignorados**, com um
+> aviso no log: recadastre as câmeras pela janela e depois apague os blocos — eles
+> guardam a senha do NVR em texto.
 
-### `[nvr]` — o gravador
-
-| Chave | Padrão | Descrição |
-|---|---|---|
-| `id` | o próprio `host` | Identificador citado em `cameras.nvr` |
-| `host` | — | IP ou hostname do NVR |
-| `rtsp_port` | `554` | Porta RTSP |
-| `username` / `password` | — | Credenciais |
-| `url_template` | formato iCSee/XMEye | Template da URL RTSP |
-
-Placeholders do template: `{host}` `{port}` `{channel}` `{stream}` `{user}`
-`{password}` `{user_enc}` `{password_enc}`. Use as variantes `_enc` na seção
-`usuario:senha@` — sem elas, uma senha com `@`, `/` ou `:` quebra o parsing do
-endereço. O padrão é:
+Todas as chaves estão comentadas em
+[`config/cameras.example.toml`](config/cameras.example.toml). O modelo de URL
+RTSP (campo **Avançado** do cadastro) aceita os placeholders `{host}` `{port}`
+`{channel}` `{stream}` `{user}` `{password}` `{user_enc}` `{password_enc}`. Use as
+variantes `_enc` na seção `usuario:senha@` — sem elas, uma senha com `@`, `/` ou
+`:` quebra o parsing do endereço. O padrão (iCSee/XMEye) é:
 
 ```
 rtsp://{user_enc}:{password_enc}@{host}:{port}/user={user}&password={password}&channel={channel}&stream={stream}.sdp
 ```
-
-### `[[nvrs]]` — gravadores adicionais
-
-Mesmas chaves de `[nvr]`. Com mais de um gravador, toda câmera precisa declarar
-`nvr = "<id>"`.
-
-### `[[cameras]]` — uma por canal
-
-| Chave | Padrão | Descrição |
-|---|---|---|
-| `name` | — | Nome exibido |
-| `channel` | — | Canal no gravador (1, 2, 3…) |
-| `stream` | `0` | `0` = principal, `1` = substream |
-| `nvr` | único gravador | `id` do gravador desta câmera |
-| `enabled` | `true` | `false` oculta sem apagar |
 
 ### `[app]` — comportamento
 
@@ -204,12 +224,12 @@ Mesmas chaves de `[nvr]`. Com mais de um gravador, toda câmera precisa declarar
 
 ```sh
 cargo run --release                  # abre o dashboard
-cargo run --release -- --check       # valida config + alcance dos NVRs, sem GUI
+cargo run --release -- --check       # valida config + alcance dos dispositivos, sem GUI
 cargo run --release -- --help
 ```
 
-`--check` confirma que o TOML é válido, testa o TCP de cada NVR, lista as
-câmeras com a URL mascarada e mostra os diretórios de saída. É o primeiro
+`--check` confirma que o TOML é válido, testa o TCP de cada dispositivo
+cadastrado, lista as câmeras com a URL mascarada e mostra os diretórios de saída. É o primeiro
 comando a rodar quando algo não funciona.
 
 ### Atalhos

@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
-use crate::config::{CameraEntry, Config, MASK, Nvr};
+use crate::config::{App, MASK};
+use crate::store::{ChannelEntry, Device};
 
 /// Caracteres que precisam ser escapados na seção `user:senha@` da URL.
 /// Mantemos os "unreserved" da RFC 3986 (`-`, `.`, `_`, `~`) sem escape.
@@ -33,14 +33,14 @@ pub struct UrlTemplate {
 }
 
 impl UrlTemplate {
-    pub fn new(nvr: &Nvr) -> Self {
-        let password = nvr.password.expose().to_string();
+    pub fn new(device: &Device) -> Self {
+        let password = device.password.expose().to_string();
         Self {
-            template: nvr.url_template.clone(),
-            host: nvr.host.clone(),
-            port: nvr.rtsp_port,
-            user_enc: utf8_percent_encode(&nvr.username, USERINFO).to_string(),
-            user: nvr.username.clone(),
+            template: device.template().to_string(),
+            host: device.host.clone(),
+            port: device.port,
+            user_enc: utf8_percent_encode(&device.username, USERINFO).to_string(),
+            user: device.username.clone(),
             password_enc: utf8_percent_encode(&password, USERINFO).to_string(),
             password,
         }
@@ -174,58 +174,48 @@ impl Camera {
     }
 }
 
-/// Constrói uma câmera para cada entrada habilitada da configuração.
+/// Constrói as câmeras de um dispositivo, uma por canal cadastrado.
 ///
-/// Câmeras do mesmo gravador compartilham um único [`UrlTemplate`], de modo que
-/// as credenciais existam uma vez só na memória por NVR.
-pub fn build_all(config: &Config) -> Result<Vec<Camera>> {
-    let templates: Vec<(String, Arc<UrlTemplate>)> = config
-        .all_nvrs()
-        .into_iter()
-        .map(|nvr| (nvr.id().to_string(), Arc::new(UrlTemplate::new(nvr))))
-        .collect();
-
-    config
-        .enabled_cameras()
+/// `first_id` é o id da primeira; as demais seguem em sequência. Todas
+/// compartilham um único [`UrlTemplate`], então as credenciais existem uma vez
+/// só na memória por dispositivo.
+pub fn build_device(first_id: usize, device: &Device, app: &App) -> Vec<Camera> {
+    let urls = Arc::new(UrlTemplate::new(device));
+    device
+        .channels
+        .iter()
         .enumerate()
-        .map(|(id, entry)| build_one(config, &templates, id, entry))
+        .map(|(offset, entry)| build_one(first_id + offset, device, &urls, entry, app))
         .collect()
 }
 
-fn build_one(
-    config: &Config,
-    templates: &[(String, Arc<UrlTemplate>)],
+pub fn build_one(
     id: usize,
-    entry: &CameraEntry,
-) -> Result<Camera> {
-    let nvr = config.nvr_for(entry)?;
-    let nvr_id = nvr.id().to_string();
-    let urls = templates
-        .iter()
-        .find(|(candidate, _)| *candidate == nvr_id)
-        .map(|(_, template)| Arc::clone(template))
-        .expect("todo NVR resolvido tem um template");
-
+    device: &Device,
+    urls: &Arc<UrlTemplate>,
+    entry: &ChannelEntry,
+    app: &App,
+) -> Camera {
     // Com `adaptive_stream`, o grid roda no substream para poupar CPU/banda e
     // o fullscreen troca para o principal.
-    let grid_stream = if config.app.adaptive_stream {
-        config.app.substream_index
+    let grid_stream = if app.adaptive_stream {
+        app.substream_index
     } else {
         entry.stream
     };
 
-    Ok(Camera {
+    Camera {
         id,
         name: entry.name.clone(),
         channel: entry.channel,
         main_stream: entry.stream,
         grid_stream,
-        sub_stream: config.app.substream_index,
-        nvr_id,
-        host: nvr.host.clone(),
-        port: nvr.rtsp_port,
-        urls,
-    })
+        sub_stream: app.substream_index,
+        nvr_id: device.id.clone(),
+        host: device.host.clone(),
+        port: device.port,
+        urls: Arc::clone(urls),
+    }
 }
 
 /// Mapeia acentos latinos para ASCII, para nomes de arquivo legíveis.
@@ -258,25 +248,29 @@ pub struct Redactor {
 }
 
 impl Redactor {
-    /// Constrói a partir de todas as senhas configuradas.
-    pub fn new(config: &Config) -> Self {
-        let mut needles = Vec::new();
-        for nvr in config.all_nvrs() {
-            let password = nvr.password.expose();
-            if password.is_empty() {
-                continue;
-            }
-            let encoded = utf8_percent_encode(password, USERINFO).to_string();
-            if encoded != password {
-                needles.push(encoded);
-            }
-            needles.push(password.to_string());
+    /// Constrói a partir das senhas de todos os dispositivos.
+    pub fn new<'a>(devices: impl IntoIterator<Item = &'a Device>) -> Self {
+        let mut redactor = Self::default();
+        for device in devices {
+            redactor.add_password(device.password.expose());
         }
+        redactor
+    }
+
+    /// Passa a mascarar também esta senha (dispositivo cadastrado depois).
+    pub fn add_password(&mut self, password: &str) {
+        if password.is_empty() {
+            return;
+        }
+        let encoded = utf8_percent_encode(password, USERINFO).to_string();
+        if encoded != password {
+            self.needles.push(encoded);
+        }
+        self.needles.push(password.to_string());
         // Substituir primeiro as formas mais longas evita que um prefixo comum
         // corte a variante maior pela metade.
-        needles.sort_by_key(|n| std::cmp::Reverse(n.len()));
-        needles.dedup();
-        Self { needles }
+        self.needles.sort_by_key(|n| std::cmp::Reverse(n.len()));
+        self.needles.dedup();
     }
 
     pub fn apply(&self, text: &str) -> String {
@@ -289,43 +283,58 @@ impl Redactor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Secret;
 
-    fn config(raw: &str) -> Config {
-        toml::from_str(raw).expect("TOML de teste válido")
+    fn device(user: &str, password: &str) -> Device {
+        Device {
+            id: "192.168.77.30:554".into(),
+            name: "NVR".into(),
+            host: "192.168.77.30".into(),
+            port: 554,
+            username: user.into(),
+            password: Secret::new(password),
+            url_template: None,
+            channels: vec![ChannelEntry {
+                channel: 1,
+                name: "Portão".into(),
+                stream: 0,
+            }],
+        }
     }
 
-    const BASE: &str = r#"
-        [nvr]
-        host = "192.168.77.30"
-        username = "admin"
-        password = "1234"
+    fn app(raw: &str) -> App {
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            #[serde(default)]
+            app: App,
+        }
+        toml::from_str::<Wrapper>(raw).expect("TOML de teste válido").app
+    }
 
-        [[cameras]]
-        name = "Portão"
-        channel = 1
-    "#;
+    fn one(device: &Device, app: &App) -> Camera {
+        build_device(0, device, app).remove(0)
+    }
 
     #[test]
     fn monta_url_no_formato_do_nvr() {
-        let cameras = build_all(&config(BASE)).unwrap();
+        let camera = one(&device("admin", "1234"), &app(""));
         assert_eq!(
-            cameras[0].url_for(0),
+            camera.url_for(0),
             "rtsp://admin:1234@192.168.77.30:554/user=admin&password=1234&channel=1&stream=0.sdp"
         );
     }
 
     #[test]
     fn url_por_stream_muda_apenas_o_campo_stream() {
-        let cameras = build_all(&config(BASE)).unwrap();
-        assert!(cameras[0].url_for(1).ends_with("&channel=1&stream=1.sdp"));
-        assert!(cameras[0].url_for(0).ends_with("&channel=1&stream=0.sdp"));
+        let camera = one(&device("admin", "1234"), &app(""));
+        assert!(camera.url_for(1).ends_with("&channel=1&stream=1.sdp"));
+        assert!(camera.url_for(0).ends_with("&channel=1&stream=0.sdp"));
     }
 
     #[test]
     fn url_mascarada_esconde_a_senha() {
-        let raw = BASE.replace("\"1234\"", "\"s3nh@!\"");
-        let cameras = build_all(&config(&raw)).unwrap();
-        let masked = cameras[0].masked_url_for(0);
+        let camera = one(&device("admin", "s3nh@!"), &app(""));
+        let masked = camera.masked_url_for(0);
         assert!(!masked.contains("s3nh@!"));
         assert!(!masked.contains("s3nh%40%21"));
         assert_eq!(
@@ -338,106 +347,67 @@ mod tests {
     fn escapa_credenciais_apenas_no_userinfo() {
         // O `@` quebraria o parsing da URL antes do host, mas o NVR espera o
         // valor literal no par `password=` do path.
-        let raw = BASE
-            .replace("\"admin\"", "\"adm in\"")
-            .replace("\"1234\"", "\"a@b/c\"");
-        let cameras = build_all(&config(&raw)).unwrap();
-        let url = cameras[0].url_for(0);
+        let camera = one(&device("adm in", "a@b/c"), &app(""));
+        let url = camera.url_for(0);
         assert!(url.starts_with("rtsp://adm%20in:a%40b%2Fc@192.168.77.30:554/"));
         assert!(url.contains("user=adm in&password=a@b/c&"));
     }
 
     #[test]
     fn respeita_template_customizado() {
-        let raw = r#"
-            [nvr]
-            host = "192.168.77.30"
-            username = "admin"
-            password = "1234"
-            url_template = "rtsp://{host}:{port}/live/ch{channel}?q={stream}"
-
-            [[cameras]]
-            name = "Portão"
-            channel = 1
-        "#;
-        let cameras = build_all(&config(raw)).unwrap();
-        assert_eq!(
-            cameras[0].url_for(0),
-            "rtsp://192.168.77.30:554/live/ch1?q=0"
-        );
-        assert_eq!(
-            cameras[0].url_for(1),
-            "rtsp://192.168.77.30:554/live/ch1?q=1"
-        );
+        let mut d = device("admin", "1234");
+        d.url_template = Some("rtsp://{host}:{port}/live/ch{channel}?q={stream}".into());
+        let camera = one(&d, &app(""));
+        assert_eq!(camera.url_for(0), "rtsp://192.168.77.30:554/live/ch1?q=0");
+        assert_eq!(camera.url_for(1), "rtsp://192.168.77.30:554/live/ch1?q=1");
     }
 
     #[test]
     fn adaptive_stream_usa_substream_no_grid() {
-        let raw = format!("{BASE}\n[app]\nadaptive_stream = true\n");
-        let cameras = build_all(&config(&raw)).unwrap();
-        assert_eq!(
-            cameras[0].main_stream, 0,
-            "fullscreen continua no principal"
-        );
-        assert_eq!(cameras[0].grid_stream, 1, "grid cai para o substream");
+        let d = device("admin", "1234");
+        let camera = one(&d, &app("[app]\nadaptive_stream = true\n"));
+        assert_eq!(camera.main_stream, 0, "fullscreen continua no principal");
+        assert_eq!(camera.grid_stream, 1, "grid cai para o substream");
+        assert_eq!(camera.grid_quality(), Quality::Low);
 
-        let cameras = build_all(&config(BASE)).unwrap();
-        assert_eq!(cameras[0].grid_stream, 0, "sem adaptive, grid = principal");
+        let camera = one(&d, &app(""));
+        assert_eq!(camera.grid_stream, 0, "sem adaptive, grid = principal");
+        assert_eq!(camera.grid_quality(), Quality::High);
+    }
+
+    #[test]
+    fn um_dispositivo_gera_uma_camera_por_canal_com_ids_em_sequencia() {
+        let mut d = device("admin", "1234");
+        d.channels.push(ChannelEntry {
+            channel: 3,
+            name: "Quintal".into(),
+            stream: 0,
+        });
+        let cameras = build_device(5, &d, &app(""));
+        assert_eq!(cameras.iter().map(|c| c.id).collect::<Vec<_>>(), vec![5, 6]);
+        assert_eq!(cameras[1].channel, 3);
+        assert_eq!(cameras[1].pref_key(), "192.168.77.30:554/3");
     }
 
     #[test]
     fn label_e_slug() {
-        let raw = BASE.replace("\"Portão\"", "\"Câmera dos Fundos\"");
-        let cameras = build_all(&config(&raw)).unwrap();
-        assert_eq!(cameras[0].label(), "cam0·ch1");
-        assert_eq!(cameras[0].slug(), "camera-dos-fundos");
+        let mut d = device("admin", "1234");
+        d.channels[0].name = "Câmera dos Fundos".into();
+        let camera = one(&d, &app(""));
+        assert_eq!(camera.label(), "cam0·ch1");
+        assert_eq!(camera.slug(), "camera-dos-fundos");
     }
 
     #[test]
     fn slug_cai_no_canal_quando_o_nome_nao_tem_ascii() {
-        let raw = BASE.replace("\"Portão\"", "\"日本\"");
-        let cameras = build_all(&config(&raw)).unwrap();
-        assert_eq!(cameras[0].slug(), "ch1");
-    }
-
-    #[test]
-    fn cameras_de_nvrs_diferentes_apontam_para_hosts_diferentes() {
-        let raw = r#"
-            [nvr]
-            id = "casa"
-            host = "192.168.77.30"
-            username = "admin"
-            password = "a"
-
-            [[nvrs]]
-            id = "loja"
-            host = "10.0.0.9"
-            rtsp_port = 8554
-            username = "op"
-            password = "b"
-
-            [[cameras]]
-            name = "Portão"
-            channel = 1
-            nvr = "casa"
-
-            [[cameras]]
-            name = "Caixa"
-            channel = 2
-            nvr = "loja"
-        "#;
-        let cameras = build_all(&config(raw)).unwrap();
-        assert_eq!(cameras[0].host, "192.168.77.30");
-        assert_eq!(cameras[0].nvr_id, "casa");
-        assert_eq!(cameras[1].host, "10.0.0.9");
-        assert_eq!(cameras[1].port, 8554);
-        assert!(cameras[1].url_for(0).contains("op:b@10.0.0.9:8554"));
+        let mut d = device("admin", "1234");
+        d.channels[0].name = "日本".into();
+        assert_eq!(one(&d, &app("")).slug(), "ch1");
     }
 
     #[test]
     fn redactor_limpa_senha_literal_e_codificada() {
-        let raw = BASE.replace("\"1234\"", "\"a@b\"");
-        let redactor = Redactor::new(&config(&raw));
+        let redactor = Redactor::new([&device("admin", "a@b")]);
         let sujo = "Could not open rtsp://admin:a%40b@10.0.0.1/x (user=admin&password=a@b)";
         let limpo = redactor.apply(sujo);
         assert!(!limpo.contains("a@b"), "senha literal vazou: {limpo}");
@@ -446,27 +416,10 @@ mod tests {
     }
 
     #[test]
-    fn redactor_cobre_todos_os_nvrs() {
-        let raw = r#"
-            [nvr]
-            id = "casa"
-            host = "h1"
-            username = "u"
-            password = "senha-casa"
-
-            [[nvrs]]
-            id = "loja"
-            host = "h2"
-            username = "u"
-            password = "senha-loja"
-
-            [[cameras]]
-            name = "A"
-            channel = 1
-            nvr = "casa"
-        "#;
-        let redactor = Redactor::new(&config(raw));
+    fn redactor_cobre_todos_os_dispositivos_e_os_adicionados_depois() {
+        let mut redactor = Redactor::new([&device("u", "senha-casa")]);
+        redactor.add_password("senha-loja");
         let limpo = redactor.apply("senha-casa e senha-loja");
-        assert_eq!(limpo, "*** e ***");
+        assert!(!limpo.contains("senha-casa") && !limpo.contains("senha-loja"));
     }
 }

@@ -600,7 +600,16 @@ impl Supervisor {
         tokio::select! {
             _ = tokio::time::sleep(delay) => true,
             _ = self.shutdown.recv() => false,
+            // A UI largou o canal de comandos: a câmera foi removida.
+            _ = commands_closed(&self.commands) => false,
         }
+    }
+}
+
+/// Resolve quando ninguém mais pode mandar comandos a este supervisor.
+async fn commands_closed(commands: &async_channel::Receiver<Command>) {
+    while !commands.is_closed() {
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
 

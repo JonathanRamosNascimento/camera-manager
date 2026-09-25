@@ -1,54 +1,19 @@
 # ---------------------------------------------------------------------------
 # nvr-dashboard — arquivo de configuração de exemplo
 #
-# Copie para `config/cameras.toml` e preencha as credenciais reais:
+# Ajustes do app. É OPCIONAL: sem este arquivo valem os padrões abaixo.
 #
 #     cp config/cameras.example.toml config/cameras.toml
 #     chmod 600 config/cameras.toml
 #
-# `config/cameras.toml` está no .gitignore e NUNCA deve ser versionado.
-# Valide a configuração sem abrir a interface com:  cargo run -- --check
+# As CÂMERAS não ficam aqui: são cadastradas pela janela do app (escanear a
+# rede ou adicionar manualmente) e guardadas em
+# ~/.config/nvr-dashboard/devices.toml. Blocos `[nvr]`, `[[nvrs]]` e
+# `[[cameras]]` de versões antigas ainda são aceitos, mas ignorados.
 #
-# Só `[nvr]` e `[[cameras]]` são obrigatórios; todo o resto tem padrão.
+# `config/cameras.toml` está no .gitignore. Valide sem abrir a interface com:
+#     cargo run -- --check
 # ---------------------------------------------------------------------------
-
-[nvr]
-# Identificador citado em `cameras.nvr`. Opcional: o padrão é o próprio host.
-id = "principal"
-
-# IP ou hostname do gravador na rede local.
-host = "192.168.77.30"
-
-# Porta RTSP. Padrão do iCSee/XMEye: 554.
-rtsp_port = 554
-
-# Credenciais do NVR. Deixe este arquivo com permissão 600.
-username = "admin"
-password = "TROQUE-ME"
-
-# Template da URL RTSP. O padrão abaixo é o formato do firmware iCSee/XMEye
-# (Hi3520) e já é aplicado se você omitir esta chave.
-#
-# Placeholders disponíveis:
-#   {host} {port} {channel} {stream}   — dados da câmera
-#   {user} {password}                  — credenciais literais (parte do path)
-#   {user_enc} {password_enc}          — credenciais percent-encoded
-#
-# Use as variantes `_enc` na seção `usuario:senha@` da URL: sem elas, uma senha
-# com `@`, `/` ou `:` quebraria o parsing do endereço.
-url_template = "rtsp://{user_enc}:{password_enc}@{host}:{port}/user={user}&password={password}&channel={channel}&stream={stream}.sdp"
-
-# ---------------------------------------------------------------------------
-# Vários gravadores no mesmo dashboard (opcional).
-# Repita o bloco quantas vezes precisar; cada um aceita as mesmas chaves de
-# [nvr]. Com mais de um gravador, toda câmera precisa dizer `nvr = "<id>"`.
-# ---------------------------------------------------------------------------
-
-# [[nvrs]]
-# id = "loja"
-# host = "192.168.9.10"
-# username = "admin"
-# password = "OUTRA-SENHA"
 
 [app]
 # Buffer de jitter do rtspsrc, em ms. Maior = mais estável e mais latência.
@@ -100,29 +65,6 @@ reconnect_max_secs = 60
 # realmente expõe o substream — teste com `stream = 1` numa câmera primeiro.
 adaptive_stream = false
 substream_index = 1
-
-# ---------------------------------------------------------------------------
-# Uma seção [[cameras]] por canal do NVR.
-#   channel — número do canal no gravador (1, 2, 3…)
-#   stream  — 0 = principal (alta qualidade), 1 = substream (menor resolução)
-#   nvr     — id do gravador; obrigatório apenas com mais de um configurado
-#   enabled — opcional, padrão true; use false para ocultar sem apagar
-# ---------------------------------------------------------------------------
-
-[[cameras]]
-name = "Câmera 1"
-channel = 1
-stream = 0
-
-[[cameras]]
-name = "Câmera 2"
-channel = 2
-stream = 0
-
-[[cameras]]
-name = "Câmera 3"
-channel = 3
-stream = 0
 
 # ---------------------------------------------------------------------------
 # Capturas de tela (botão 📷 no tile ou Ctrl+S)
