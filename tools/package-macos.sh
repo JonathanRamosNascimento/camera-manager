@@ -58,7 +58,13 @@ echo "==> Copiando as bibliotecas de que dependem (dylibbundler)"
 # Array, não `$(printf ...)`: o caminho do .app tem espaço ("Camera Manager.app").
 BUNDLE_ARGS=(-x "$MACOS/$NAME" -x "$RES/libexec/gstreamer-1.0/gst-plugin-scanner")
 for f in "$RES"/lib/gstreamer-1.0/*.dylib; do BUNDLE_ARGS+=(-x "$f"); done
-dylibbundler -of -b -cd -d "$RES/lib" -p "@rpath/" "${BUNDLE_ARGS[@]}" >/dev/null
+# `-s`: onde procurar dependências já escritas como @rpath/... (o libgstgtk4 do
+# gst-plugins-rs vem assim); sem isso o dylibbundler não as acha e pede o caminho
+# no terminal, em loop.
+dylibbundler -of -b -cd -d "$RES/lib" -p "@rpath/" \
+    -s "$BREW/lib" -s "$BREW/opt/gstreamer/lib" -s "$BREW/opt/gst-plugins-base/lib" \
+    -s "$BREW/opt/gst-plugins-bad/lib" -s "$BREW/opt/glib/lib" -s "$BREW/opt/gtk4/lib" \
+    "${BUNDLE_ARGS[@]}" </dev/null >/dev/null
 
 echo "==> rpaths (cada binário enxerga Resources/lib de onde está)"
 add_rpath() { install_name_tool -add_rpath "$2" "$1" 2>/dev/null || true; }
