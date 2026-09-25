@@ -75,7 +75,7 @@ substream_index = 1
 # directory = "~/Imagens/cameras"
 
 # ---------------------------------------------------------------------------
-# Gravação sob demanda (botão ⏺ no tile ou Ctrl+R)
+# Gravação sob demanda (botão de câmera de vídeo no tile ou Ctrl+R)
 #
 # Grava o stream como veio do NVR, sem recodificar. `splitmuxsink` fatia em
 # arquivos de `segment_seconds` e, com `max_files > 0`, apaga os mais antigos —

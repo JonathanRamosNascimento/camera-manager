@@ -27,6 +27,11 @@ use crate::pipeline::StreamStats;
 use crate::reconnect::CameraState;
 use crate::ui::UiAction;
 
+/// Ícone do botão de gravar (câmera de vídeo) e o de parar, usados no card e
+/// na tela cheia.
+pub const RECORD_ICON: &str = "camera-video-symbolic";
+pub const STOP_ICON: &str = "media-playback-stop-symbolic";
+
 /// Classes CSS mutuamente exclusivas aplicadas ao "LED" de status.
 const STATUS_CLASSES: [&str; 3] = ["status-live", "status-connecting", "status-error"];
 
@@ -130,7 +135,7 @@ impl CameraTile {
         }
 
         let snapshot_button = tool_button("camera-photo-symbolic", "Capturar PNG (Ctrl+S)");
-        let record_button = tool_button("media-record-symbolic", "Gravar (Ctrl+R)");
+        let record_button = tool_button(RECORD_ICON, "Gravar (Ctrl+R)");
         connect_action(&snapshot_button, actions, UiAction::Snapshot(camera.id));
         connect_action(
             &record_button,
@@ -298,10 +303,16 @@ impl CameraTile {
         self.recording.set(active);
         self.rec_badge.set_visible(active);
         self.record_button.set_icon_name(if wanted {
-            "media-playback-stop-symbolic"
+            STOP_ICON
         } else {
-            "media-record-symbolic"
+            RECORD_ICON
         });
+        // Vermelho enquanto grava: o estado salta aos olhos.
+        if wanted {
+            self.record_button.add_css_class("recording-on");
+        } else {
+            self.record_button.remove_css_class("recording-on");
+        }
         self.record_button.set_tooltip_text(Some(if wanted {
             "Parar gravação (Ctrl+R)"
         } else {

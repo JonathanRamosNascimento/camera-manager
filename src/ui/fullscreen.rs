@@ -16,7 +16,7 @@ use gtk::{gdk, pango};
 
 use crate::camera::Camera;
 use crate::reconnect::CameraState;
-use crate::ui::UiAction;
+use crate::ui::{UiAction, camera_tile};
 use crate::ui::camera_tile::describe;
 
 const STATUS_CLASSES: [&str; 3] = ["status-live", "status-connecting", "status-error"];
@@ -138,7 +138,7 @@ impl FullscreenView {
             .tooltip_text("Salva o quadro atual em PNG (Ctrl+S)")
             .build();
         let record_button = gtk::Button::builder()
-            .icon_name("media-record-symbolic")
+            .icon_name(camera_tile::RECORD_ICON)
             .label("Gravar")
             .tooltip_text("Inicia/para a gravação (Ctrl+R)")
             .build();
@@ -242,10 +242,15 @@ impl FullscreenView {
     pub fn set_recording(&self, recording: bool) {
         self.rec_badge.set_visible(recording);
         self.record_button.set_icon_name(if recording {
-            "media-playback-stop-symbolic"
+            camera_tile::STOP_ICON
         } else {
-            "media-record-symbolic"
+            camera_tile::RECORD_ICON
         });
+        if recording {
+            self.record_button.add_css_class("recording-on");
+        } else {
+            self.record_button.remove_css_class("recording-on");
+        }
         self.record_button
             .set_label(if recording { "Parar" } else { "Gravar" });
     }

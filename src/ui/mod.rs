@@ -913,7 +913,7 @@ fn build_window(app: &gtk::Application, bootstrap: &Bootstrap) -> SupervisorsDon
     let header = gtk::HeaderBar::new();
     // Ícone + texto: um `Button` com `label` e `icon_name` mostraria só o ícone.
     let cameras_content = gtk::Box::builder().spacing(6).build();
-    cameras_content.append(&gtk::Image::from_icon_name("camera-video-symbolic"));
+    cameras_content.append(&gtk::Image::from_icon_name("view-list-symbolic"));
     cameras_content.append(&gtk::Label::new(Some("Gerenciar câmeras")));
     let cameras_button = gtk::Button::builder()
         .child(&cameras_content)

@@ -188,3 +188,10 @@ window.nvr-dashboard {
     border-color: rgba(120, 170, 255, 0.95);
     background: rgba(120, 170, 255, 0.20);
 }
+
+/* ---- botão de gravar ativo ---------------------------------------------- */
+
+.recording-on {
+    color: #f87171;
+    opacity: 1;
+}
