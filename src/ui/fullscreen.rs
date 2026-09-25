@@ -30,6 +30,7 @@ pub struct FullscreenView {
     rec_badge: gtk::Label,
     motion_badge: gtk::Label,
     record_button: gtk::Button,
+    listen_button: gtk::Button,
     center: gtk::Box,
     spinner: gtk::Spinner,
     status: gtk::Label,
@@ -142,6 +143,12 @@ impl FullscreenView {
             .label("Gravar")
             .tooltip_text("Inicia/para a gravação (Ctrl+R)")
             .build();
+        let listen_button = gtk::Button::builder()
+            .icon_name(camera_tile::LISTEN_OFF_ICON)
+            .label("Ouvir")
+            .tooltip_text("Ouve o áudio da câmera (Ctrl+M)")
+            .build();
+        bind_current(&listen_button, actions, &current, UiAction::ToggleListen);
         bind_current(&snapshot_button, actions, &current, UiAction::Snapshot);
         bind_current(&record_button, actions, &current, UiAction::ToggleRecording);
 
@@ -154,6 +161,7 @@ impl FullscreenView {
         let spacer = gtk::Box::builder().hexpand(true).build();
         toolbar.append(&spacer);
         toolbar.append(&snapshot_button);
+        toolbar.append(&listen_button);
         toolbar.append(&record_button);
 
         let root = gtk::Box::builder()
@@ -173,6 +181,7 @@ impl FullscreenView {
             rec_badge,
             motion_badge,
             record_button,
+            listen_button,
             center,
             spinner,
             status,
@@ -253,6 +262,21 @@ impl FullscreenView {
         }
         self.record_button
             .set_label(if recording { "Parar" } else { "Gravar" });
+    }
+
+    pub fn set_listening(&self, on: bool) {
+        self.listen_button.set_icon_name(if on {
+            camera_tile::LISTEN_ON_ICON
+        } else {
+            camera_tile::LISTEN_OFF_ICON
+        });
+        self.listen_button
+            .set_label(if on { "Silenciar" } else { "Ouvir" });
+        if on {
+            self.listen_button.add_css_class("listening-on");
+        } else {
+            self.listen_button.remove_css_class("listening-on");
+        }
     }
 
     pub fn set_motion(&self, active: bool) {

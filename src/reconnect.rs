@@ -431,6 +431,12 @@ impl Supervisor {
                         .chain(recording.stopping.iter())
                         .any(|branch| branch.owns(src))
                 });
+                // Idem para o som: uma saída de áudio quebrada não derruba o vídeo.
+                if message.src().is_some_and(|src| self.handle.audio.owns(src)) {
+                    tracing::warn!(camera = %label, erro = %reason, detalhe = ?detail, "erro no áudio; desligando o som");
+                    self.handle.audio.fail(&self.handle.pipeline);
+                    return None;
+                }
                 if from_recording {
                     tracing::error!(camera = %label, erro = %reason, detalhe = ?detail, "erro na gravação");
                     recording.wanted = false;

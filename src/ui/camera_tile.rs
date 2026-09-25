@@ -31,6 +31,9 @@ use crate::ui::UiAction;
 /// na tela cheia.
 pub const RECORD_ICON: &str = "camera-video-symbolic";
 pub const STOP_ICON: &str = "media-playback-stop-symbolic";
+/// Alto-falante desligado / ligado, no botão de ouvir o áudio.
+pub const LISTEN_OFF_ICON: &str = "audio-volume-muted-symbolic";
+pub const LISTEN_ON_ICON: &str = "audio-volume-high-symbolic";
 
 /// Classes CSS mutuamente exclusivas aplicadas ao "LED" de status.
 const STATUS_CLASSES: [&str; 3] = ["status-live", "status-connecting", "status-error"];
@@ -46,6 +49,7 @@ pub struct CameraTile {
     rec_badge: gtk::Label,
     motion_badge: gtk::Label,
     record_button: gtk::Button,
+    listen_button: gtk::Button,
     center: gtk::Box,
     spinner: gtk::Spinner,
     status: gtk::Label,
@@ -136,6 +140,8 @@ impl CameraTile {
 
         let snapshot_button = tool_button("camera-photo-symbolic", "Capturar PNG (Ctrl+S)");
         let record_button = tool_button(RECORD_ICON, "Gravar (Ctrl+R)");
+        let listen_button = tool_button(LISTEN_OFF_ICON, "Ouvir o áudio (Ctrl+M)");
+        connect_action(&listen_button, actions, UiAction::ToggleListen(camera.id));
         connect_action(&snapshot_button, actions, UiAction::Snapshot(camera.id));
         connect_action(
             &record_button,
@@ -158,6 +164,7 @@ impl CameraTile {
             detail.upcast_ref(),
             quality_selector.upcast_ref(),
             snapshot_button.upcast_ref(),
+            listen_button.upcast_ref(),
             record_button.upcast_ref(),
         ] {
             bar.append(widget);
@@ -227,6 +234,7 @@ impl CameraTile {
             rec_badge,
             motion_badge,
             record_button,
+            listen_button,
             center,
             spinner,
             status,
@@ -299,6 +307,25 @@ impl CameraTile {
 
     /// `active` = está gravando de fato; `wanted` = o que o usuário pediu.
     /// Eles divergem enquanto a câmera está fora do ar com gravação pendente.
+    /// Reflete se o áudio desta câmera está sendo ouvido.
+    pub fn set_listening(&self, on: bool) {
+        self.listen_button.set_icon_name(if on {
+            LISTEN_ON_ICON
+        } else {
+            LISTEN_OFF_ICON
+        });
+        self.listen_button.set_tooltip_text(Some(if on {
+            "Parar de ouvir (Ctrl+M)"
+        } else {
+            "Ouvir o áudio (Ctrl+M)"
+        }));
+        if on {
+            self.listen_button.add_css_class("listening-on");
+        } else {
+            self.listen_button.remove_css_class("listening-on");
+        }
+    }
+
     pub fn set_recording(&self, active: bool, wanted: bool) {
         self.recording.set(active);
         self.rec_badge.set_visible(active);

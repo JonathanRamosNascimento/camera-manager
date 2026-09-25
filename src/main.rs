@@ -1,5 +1,6 @@
 //! Dashboard de visualização das câmeras de um NVR iCSee/XMEye via RTSP.
 
+mod audio;
 mod camera;
 mod config;
 mod discovery;
@@ -49,6 +50,7 @@ ATALHOS NA JANELA:
     Esc              Volta ao grid
     Ctrl+S           Captura um PNG da câmera em foco
     Ctrl+R           Inicia/para a gravação da câmera em foco
+    Ctrl+M           Liga/desliga o áudio da câmera em foco (uma por vez)
     F11              Alterna tela cheia da janela
     Ctrl+Q           Sai
 

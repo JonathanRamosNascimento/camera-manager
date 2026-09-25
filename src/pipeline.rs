@@ -24,6 +24,7 @@ use anyhow::{Context, Result};
 use gst::prelude::*;
 use gtk::gdk;
 
+use crate::audio::AudioState;
 use crate::camera::Camera;
 use crate::motion::MotionDetector;
 
@@ -209,9 +210,17 @@ pub struct CameraPipeline {
     src: gst::Element,
     /// Ponto de derivação do stream codificado, usado pela gravação.
     tee_rtp: gst::Element,
+    /// Som da câmera: desligado até o usuário pedir para ouvir.
+    pub audio: Arc<AudioState>,
+    label: String,
 }
 
 impl CameraPipeline {
+    /// Liga ou desliga a escuta desta câmera.
+    pub fn set_listening(&self, on: bool) {
+        self.audio.set_listening(&self.pipeline, on, &self.label);
+    }
+
     /// Troca a URL do `rtspsrc`. Só tem efeito com a pipeline em `NULL`/`READY`,
     /// que é justamente o estado entre duas tentativas do supervisor.
     pub fn set_location(&self, url: &str) {
@@ -295,7 +304,8 @@ pub fn build(camera: &Camera, opts: &PipelineOptions) -> Result<Built> {
     }
 
     tune_autoplugged_elements(&decode, camera.label(), opts.wait_for_keyframe);
-    link_rtspsrc_to_tee(&src, &tee_rtp, camera.label());
+    let audio = Arc::new(AudioState::default());
+    link_rtspsrc_to_tee(&src, &tee_rtp, &pipeline, Arc::clone(&audio), camera.label());
     link_decodebin_to_tee(&decode, &tee_raw, camera.label());
 
     Ok(Built {
@@ -305,6 +315,8 @@ pub fn build(camera: &Camera, opts: &PipelineOptions) -> Result<Built> {
             stats,
             src,
             tee_rtp,
+            audio,
+            label: camera.label(),
         },
     })
 }
@@ -395,10 +407,24 @@ fn encoded_queue(name: &str) -> Result<gst::Element> {
     Ok(queue)
 }
 
-/// Liga o pad de vídeo do `rtspsrc` ao tee, ignorando áudio/metadados.
-fn link_rtspsrc_to_tee(src: &gst::Element, tee: &gst::Element, label: String) {
+/// Liga o pad de vídeo do `rtspsrc` ao tee. O de áudio vai para o [`AudioState`],
+/// que só o conecta a uma saída de som quando o usuário pede para ouvir.
+fn link_rtspsrc_to_tee(
+    src: &gst::Element,
+    tee: &gst::Element,
+    pipeline: &gst::Pipeline,
+    audio: Arc<AudioState>,
+    label: String,
+) {
     let tee = tee.downgrade();
+    let pipeline = pipeline.downgrade();
     src.connect_pad_added(move |_, src_pad| {
+        if pad_is_audio(src_pad) {
+            if let Some(pipeline) = pipeline.upgrade() {
+                audio.on_pad_added(&pipeline, src_pad, &label);
+            }
+            return;
+        }
         let Some(tee) = tee.upgrade() else { return };
         let Some(sink_pad) = tee.static_pad("sink") else {
             return;
@@ -444,6 +470,16 @@ fn link_decodebin_to_tee(decode: &gst::Element, tee: &gst::Element, label: Strin
             tracing::error!(camera = %label, %err, "falha ao ligar decodebin ao tee de vídeo");
         }
     });
+}
+
+/// Um pad RTP de áudio tem caps `application/x-rtp, media=(string)audio`.
+fn pad_is_audio(pad: &gst::Pad) -> bool {
+    pad.current_caps()
+        .and_then(|caps| {
+            caps.structure(0)
+                .and_then(|s| s.get::<String>("media").ok())
+        })
+        .is_some_and(|media| media == "audio")
 }
 
 /// Um pad RTP de vídeo tem caps `application/x-rtp, media=(string)video`.

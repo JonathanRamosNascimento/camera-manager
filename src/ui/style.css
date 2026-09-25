@@ -195,3 +195,10 @@ window.nvr-dashboard {
     color: #f87171;
     opacity: 1;
 }
+
+/* ---- áudio ligado ------------------------------------------------------- */
+
+.listening-on {
+    color: #4ade80;
+    opacity: 1;
+}

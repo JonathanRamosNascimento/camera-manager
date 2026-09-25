@@ -251,6 +251,7 @@ comando a rodar quando algo não funciona.
 | `Esc` | Volta ao grid |
 | `Ctrl+S` | Captura PNG da câmera em foco |
 | `Ctrl+R` | Inicia/para a gravação da câmera em foco |
+| `Ctrl+M` | Liga/desliga o áudio da câmera em foco |
 | `F11` | Alterna tela cheia da janela |
 | `Ctrl+Q` / `Ctrl+W` | Sai |
 
@@ -285,6 +286,25 @@ qualquer momento, apague o arquivo.
 As janelas de gerenciamento (lista, cadastro, edição e varredura) fecham com o
 **X** ou com **Esc**; abrir uma de novo cria uma janela nova, já com os dados
 atuais.
+
+### Áudio (ouvir a câmera)
+
+Cada card e a tela cheia têm um botão de **alto-falante**. Ao clicar (ou `Ctrl+M`
+na câmera em foco) você passa a ouvir o som que o NVR já envia pelo RTSP (nos
+iCSee/XMEye, G.711 A-law); o ícone fica verde. Clique de novo para silenciar.
+
+- **Uma câmera por vez:** ligar o som de uma silencia a que estava ligada.
+- **Só consome quando ligado:** o ramo de áudio só é montado ao ouvir; desligado,
+  nada abre a saída de som.
+- **Sobrevive a reconexões** e a trocas de qualidade da câmera.
+- Um erro na saída de som desliga o áudio (com aviso no log), mas **não** reinicia
+  o vídeo.
+- Câmera sem microfone: o botão fica ligado aguardando, sem efeito.
+
+**Falar pela câmera (interfone) não é suportado.** O RTSP deste NVR não oferece
+canal de retorno (o pedido de *backchannel* ONVIF volta sem faixa de envio); nos
+iCSee/XMEye o envio de voz usa o protocolo proprietário DVRIP (porta 34567), que
+o app não implementa.
 
 ### Qualidade da imagem
 

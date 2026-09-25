@@ -40,7 +40,7 @@ use gtk::{gdk, gio, glib};
 use crate::camera::{self, Camera, Quality, Redactor, UrlTemplate};
 use crate::config::{Config, Secret};
 use crate::notify::{Notifier, TrayCommand, TraySummary};
-use crate::pipeline::{self, PipelineOptions, StreamStats};
+use crate::pipeline::{self, CameraPipeline, PipelineOptions, StreamStats};
 use crate::reconnect::{
     self,
     Backoff, CameraEvent, CameraState, Command, EventKind, RecordingStatus, Supervisor,
@@ -69,6 +69,8 @@ pub enum UiAction {
     Back,
     Snapshot(usize),
     ToggleRecording(usize),
+    /// Ouvir (ou parar de ouvir) o áudio da câmera.
+    ToggleListen(usize),
     /// Qualidade da imagem no grid, escolhida no seletor do tile.
     SetQuality(usize, Quality),
     /// Abrir a lista de câmeras cadastradas.
@@ -152,6 +154,7 @@ pub fn run(config: Config, store: Store, tokio: tokio::runtime::Handle) -> Resul
     }
     app.set_accels_for_action("win.snapshot", &["<Ctrl>s"]);
     app.set_accels_for_action("win.record", &["<Ctrl>r"]);
+    app.set_accels_for_action("win.listen", &["<Ctrl>m"]);
 
     // A CLI já consumiu os argumentos; não deixamos o GTK reinterpretá-los.
     let exit_code = app.run_with_args::<&str>(&[]);
@@ -181,6 +184,8 @@ struct Slot {
     name: RefCell<String>,
     tile: CameraTile,
     paintable: Option<gdk::Paintable>,
+    /// Acesso ao pipeline para ligar/desligar o som (`None` se não subiu).
+    audio: Option<CameraPipeline>,
     /// `None` depois que a câmera é removida (ou se a pipeline nem subiu).
     /// Largar o remetente é o que faz o supervisor encerrar.
     command: RefCell<Option<async_channel::Sender<Command>>>,
@@ -273,6 +278,7 @@ impl Dashboard {
         self.fullscreen.show(&slot.named_camera(), slot.paintable.as_ref());
         self.fullscreen.set_state(&slot.state.borrow());
         self.fullscreen.set_recording(slot.recording_active.get());
+        self.sync_listening();
         self.stack.set_visible_child_name(PAGE_SINGLE);
         if self.adaptive_stream {
             self.send(id, Command::UseStream(slot.camera.main_stream));
@@ -557,8 +563,10 @@ impl Dashboard {
 
         let (command_tx, command_rx) = async_channel::bounded::<Command>(8);
         let mut command = Some(command_tx);
+        let mut audio = None;
         let (tile, paintable) = match pipeline::build(&camera, &self.spawner.options) {
             Ok(built) => {
+                audio = Some(built.handle.clone());
                 let tile = CameraTile::new(
                     &camera,
                     Some(&built.paintable),
@@ -621,6 +629,7 @@ impl Dashboard {
             camera,
             tile,
             paintable,
+            audio,
             command: RefCell::new(command),
             state: RefCell::new(CameraState::Connecting),
             recording_wanted: Cell::new(false),
@@ -668,6 +677,54 @@ impl Dashboard {
         );
         tracing::info!(camera = %slot.camera.label(), gravando = wanted, "gravação alternada");
         self.refresh_recording(id);
+    }
+
+    /// Ouve (ou para de ouvir) o áudio de uma câmera. Só uma por vez: ligar uma
+    /// silencia as outras, para não virar uma barulheira.
+    fn toggle_listen(&self, id: usize) {
+        let Some(slot) = self.slot(id) else {
+            return;
+        };
+        let Some(handle) = &slot.audio else {
+            return;
+        };
+        let turn_on = !handle.audio.is_listening();
+        if turn_on {
+            for other in self.live_slots() {
+                if other.camera.id != id
+                    && let Some(other_handle) = &other.audio
+                    && other_handle.audio.is_listening()
+                {
+                    other_handle.set_listening(false);
+                }
+            }
+        }
+        handle.set_listening(turn_on);
+        let name = slot.name.borrow().clone();
+        if turn_on {
+            let note = if handle.audio.has_audio() {
+                format!("Ouvindo {name}")
+            } else {
+                format!("Ouvindo {name} (aguardando o áudio da câmera)")
+            };
+            self.toast(&note);
+        } else {
+            self.toast(&format!("Áudio de {name} silenciado"));
+        }
+        self.sync_listening();
+    }
+
+    /// Alinha os botões de ouvir com o estado real (o áudio pode ter sido
+    /// desligado por um erro na saída de som).
+    fn sync_listening(&self) {
+        let focused = self.fullscreen.current();
+        for slot in self.live_slots() {
+            let on = slot.audio.as_ref().is_some_and(|h| h.audio.is_listening());
+            slot.tile.set_listening(on);
+            if focused == Some(slot.camera.id) {
+                self.fullscreen.set_listening(on);
+            }
+        }
     }
 
     fn send(&self, id: usize, command: Command) {
@@ -772,6 +829,7 @@ impl Dashboard {
                     .set_motion(slot.tile.stats().motion_recent(MOTION_BADGE_DURATION));
             }
         }
+        self.sync_listening();
         self.update_summary();
         self.publish_tray();
     }
@@ -1037,6 +1095,7 @@ fn spawn_loops(
                 UiAction::Back => target.back(),
                 UiAction::Snapshot(id) => target.snapshot(id),
                 UiAction::ToggleRecording(id) => target.toggle_recording(id),
+                UiAction::ToggleListen(id) => target.toggle_listen(id),
                 UiAction::SetQuality(id, quality) => target.set_quality(id, quality),
                 UiAction::ShowCameras => manage::show_cameras(&target),
                 UiAction::AddManual => manage::show_add_device(&target, None),
@@ -1167,5 +1226,15 @@ fn install_actions(window: &gtk::ApplicationWindow, dashboard: &Rc<Dashboard>) {
         )
         .build();
 
-    window.add_action_entries([close, fullscreen, open, back, snapshot, record]);
+    let target = Rc::clone(dashboard);
+    let listen = gio::ActionEntry::builder("listen")
+        .activate(
+            move |_: &gtk::ApplicationWindow, _, _| match target.focused_camera() {
+                Some(id) => target.toggle_listen(id),
+                None => target.toast("Selecione uma câmera para ouvir"),
+            },
+        )
+        .build();
+
+    window.add_action_entries([close, fullscreen, open, back, snapshot, record, listen]);
 }
