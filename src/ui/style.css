@@ -1,0 +1,135 @@
+/* Dashboard NVR — tema escuro, pensado para telas de monitoramento. */
+
+window.nvr-dashboard {
+    background-color: #08080a;
+}
+
+.camera-grid {
+    padding: 8px;
+}
+
+.camera-tile {
+    background-color: #101014;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
+}
+
+.camera-tile.drop-target {
+    border-color: rgba(250, 200, 80, 0.9);
+    border-width: 2px;
+}
+
+.camera-tile:focus-within {
+    border-color: rgba(120, 170, 255, 0.55);
+}
+
+/* ---- faixa superior do tile ------------------------------------------- */
+
+.tile-bar {
+    background-color: rgba(0, 0, 0, 0.55);
+    border-radius: 7px;
+    padding: 2px 6px 2px 9px;
+    margin: 7px;
+}
+
+.tile-name {
+    font-weight: bold;
+}
+
+.tile-detail {
+    font-family: monospace;
+    font-size: 0.85em;
+    opacity: 0.75;
+}
+
+.tile-quality {
+    font-size: 0.85em;
+    opacity: 0.8;
+}
+
+.tile-quality > button {
+    min-height: 22px;
+    padding: 0 6px;
+}
+
+.tile-tool {
+    min-width: 22px;
+    min-height: 22px;
+    padding: 2px;
+    opacity: 0.65;
+}
+
+.tile-tool:hover {
+    opacity: 1;
+}
+
+/* ---- indicadores ------------------------------------------------------- */
+
+.status-dot {
+    font-size: 1.05em;
+}
+
+.status-live {
+    color: #4ade80;
+}
+
+.status-connecting {
+    color: #fbbf24;
+}
+
+.status-error {
+    color: #f87171;
+}
+
+.badge {
+    font-family: monospace;
+    font-size: 0.72em;
+    font-weight: bold;
+    letter-spacing: 0.06em;
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: #ffffff;
+}
+
+.badge-rec {
+    background-color: #dc2626;
+}
+
+.badge-motion {
+    background-color: #d97706;
+}
+
+/* ---- overlay de status ------------------------------------------------- */
+
+.tile-center {
+    background-color: rgba(0, 0, 0, 0.62);
+    border-radius: 10px;
+    padding: 14px 20px;
+}
+
+.tile-reason {
+    font-size: 0.85em;
+    opacity: 0.7;
+}
+
+/* ---- view de câmera única ---------------------------------------------- */
+
+.fullscreen-view {
+    padding: 8px;
+}
+
+.fullscreen-name {
+    font-size: 1.1em;
+}
+
+.fullscreen-toolbar {
+    padding: 2px 4px 4px 4px;
+}
+
+/* ---- barra de título --------------------------------------------------- */
+
+.app-summary {
+    font-family: monospace;
+    font-size: 0.9em;
+    opacity: 0.8;
+}

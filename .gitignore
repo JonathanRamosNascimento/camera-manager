@@ -1,0 +1,9 @@
+# Build
+/target/
+
+# Configuração com credenciais reais do NVR — NUNCA versionar.
+/config/cameras.toml
+/config/*.local.toml
+
+# Capturas geradas em runtime
+/snapshots/

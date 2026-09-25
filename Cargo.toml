@@ -1,0 +1,18 @@
+[package]
+name = "nvr-dashboard"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+async-channel = "2.5.0"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+gst = { version = "0.25.3", package = "gstreamer" }
+gtk = { version = "0.11.4", package = "gtk4", features = ["v4_12"] }
+ksni = "0.3.6"
+percent-encoding = "2.3.2"
+serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "time", "net", "macros"] }
+toml = "1.1.5"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }

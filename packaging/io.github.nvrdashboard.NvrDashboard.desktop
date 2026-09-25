@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=NVR Dashboard
+GenericName=Visualizador de câmeras
+GenericName[en]=Camera viewer
+Comment=Grid ao vivo das câmeras RTSP de um NVR
+Comment[en]=Live grid of RTSP cameras from an NVR
+Exec=nvr-dashboard
+Icon=io.github.nvrdashboard.NvrDashboard
+Terminal=false
+Categories=AudioVideo;Video;Player;
+Keywords=camera;cameras;cctv;nvr;rtsp;vigilancia;surveillance;
+StartupNotify=true
+StartupWMClass=io.github.nvrdashboard.NvrDashboard
+X-GNOME-UsesNotifications=true

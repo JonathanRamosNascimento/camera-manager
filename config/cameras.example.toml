@@ -1,0 +1,195 @@
+# ---------------------------------------------------------------------------
+# nvr-dashboard — arquivo de configuração de exemplo
+#
+# Copie para `config/cameras.toml` e preencha as credenciais reais:
+#
+#     cp config/cameras.example.toml config/cameras.toml
+#     chmod 600 config/cameras.toml
+#
+# `config/cameras.toml` está no .gitignore e NUNCA deve ser versionado.
+# Valide a configuração sem abrir a interface com:  cargo run -- --check
+#
+# Só `[nvr]` e `[[cameras]]` são obrigatórios; todo o resto tem padrão.
+# ---------------------------------------------------------------------------
+
+[nvr]
+# Identificador citado em `cameras.nvr`. Opcional: o padrão é o próprio host.
+id = "principal"
+
+# IP ou hostname do gravador na rede local.
+host = "192.168.77.30"
+
+# Porta RTSP. Padrão do iCSee/XMEye: 554.
+rtsp_port = 554
+
+# Credenciais do NVR. Deixe este arquivo com permissão 600.
+username = "admin"
+password = "TROQUE-ME"
+
+# Template da URL RTSP. O padrão abaixo é o formato do firmware iCSee/XMEye
+# (Hi3520) e já é aplicado se você omitir esta chave.
+#
+# Placeholders disponíveis:
+#   {host} {port} {channel} {stream}   — dados da câmera
+#   {user} {password}                  — credenciais literais (parte do path)
+#   {user_enc} {password_enc}          — credenciais percent-encoded
+#
+# Use as variantes `_enc` na seção `usuario:senha@` da URL: sem elas, uma senha
+# com `@`, `/` ou `:` quebraria o parsing do endereço.
+url_template = "rtsp://{user_enc}:{password_enc}@{host}:{port}/user={user}&password={password}&channel={channel}&stream={stream}.sdp"
+
+# ---------------------------------------------------------------------------
+# Vários gravadores no mesmo dashboard (opcional).
+# Repita o bloco quantas vezes precisar; cada um aceita as mesmas chaves de
+# [nvr]. Com mais de um gravador, toda câmera precisa dizer `nvr = "<id>"`.
+# ---------------------------------------------------------------------------
+
+# [[nvrs]]
+# id = "loja"
+# host = "192.168.9.10"
+# username = "admin"
+# password = "OUTRA-SENHA"
+
+[app]
+# Buffer de jitter do rtspsrc, em ms. Maior = mais estável e mais latência.
+latency_ms = 200
+
+# Transporte RTSP: "tcp", "udp" ou "tcp+udp".
+# TCP é bem mais confiável em Wi-Fi; UDP tem latência um pouco menor.
+rtsp_protocols = "tcp"
+
+# Decodificação por hardware (VA-API / NVDEC) quando disponível.
+# Ponha `false` para forçar decoders de software — útil para isolar problemas
+# de driver em notebooks com GPU híbrida. O ganho é pequeno: 3 streams custam
+# ~0,3 de um núcleo com hardware contra ~0,4 sem.
+hardware_decoding = true
+
+# Colunas do grid. Comente para automático: ceil(sqrt(nº de câmeras)),
+# ou seja 1 câmera → 1×1, 2–4 → 2×2, 5–9 → 3×3.
+# grid_columns = 2
+
+# Sem nenhum dado do NVR por este tempo, a conexão é dada como morta e a
+# pipeline reinicia — pega o caso da câmera que "congela" sem emitir erro.
+stall_timeout_secs = 12
+
+# Segura a exibição até o primeiro keyframe.
+#
+# Quem entra no meio de um GOP não tem o quadro de referência: o decodificador
+# pinta blocos sobre uma superfície zerada e a imagem fica esverdeada até o
+# próximo keyframe. Com `true`, o tile mostra "Aguardando keyframe…" nesse
+# intervalo em vez de mostrar lixo. Ponha `false` se preferir ver a imagem se
+# formando aos poucos.
+#
+# A cura de verdade é no NVR: reduza o "I Frame Interval" (GOP) para 1–2× o
+# framerate. O vídeo passa a aparecer em 1–2 s em vez de dezenas de segundos.
+wait_for_keyframe = true
+
+# Quanto tolerar "dados chegando, nenhum quadro decodificável" antes de
+# reiniciar. Precisa ser MAIOR que o intervalo de I-frame do NVR, senão a
+# pipeline reinicia antes de alcançar o keyframe — e nunca exibe nada.
+# Ignorado quando `wait_for_keyframe = false`.
+keyframe_timeout_secs = 90
+
+# Backoff exponencial de reconexão: 2s, 4s, 8s, 16s… até o teto.
+# O contador zera assim que a câmera volta a entregar frames.
+reconnect_initial_secs = 2
+reconnect_max_secs = 60
+
+# Usa o substream no grid (menos CPU e banda) e troca para o stream principal
+# ao abrir a câmera em tela cheia. Ligue só depois de confirmar que o seu NVR
+# realmente expõe o substream — teste com `stream = 1` numa câmera primeiro.
+adaptive_stream = false
+substream_index = 1
+
+# ---------------------------------------------------------------------------
+# Uma seção [[cameras]] por canal do NVR.
+#   channel — número do canal no gravador (1, 2, 3…)
+#   stream  — 0 = principal (alta qualidade), 1 = substream (menor resolução)
+#   nvr     — id do gravador; obrigatório apenas com mais de um configurado
+#   enabled — opcional, padrão true; use false para ocultar sem apagar
+# ---------------------------------------------------------------------------
+
+[[cameras]]
+name = "Câmera 1"
+channel = 1
+stream = 0
+
+[[cameras]]
+name = "Câmera 2"
+channel = 2
+stream = 0
+
+[[cameras]]
+name = "Câmera 3"
+channel = 3
+stream = 0
+
+# ---------------------------------------------------------------------------
+# Capturas de tela (botão 📷 no tile ou Ctrl+S)
+# ---------------------------------------------------------------------------
+
+[snapshots]
+# Padrão: <Imagens>/nvr-dashboard (segue o XDG do sistema).
+# directory = "~/Imagens/cameras"
+
+# ---------------------------------------------------------------------------
+# Gravação sob demanda (botão ⏺ no tile ou Ctrl+R)
+#
+# Grava o stream como veio do NVR, sem recodificar. `splitmuxsink` fatia em
+# arquivos de `segment_seconds` e, com `max_files > 0`, apaga os mais antigos —
+# o buffer circular.
+# ---------------------------------------------------------------------------
+
+[recording]
+# Padrão: <Vídeos>/nvr-dashboard.
+# directory = "~/Vídeos/cameras"
+
+# Duração de cada arquivo.
+segment_seconds = 300
+
+# Quantos arquivos manter por sessão de gravação. 0 = sem limite.
+# Ex.: 12 segmentos de 300 s = 1 h de buffer circular.
+max_files = 0
+
+# "mkv" (matroskamux, tolera interrupção abrupta) ou "mp4" (mp4mux, mais portátil).
+container = "mkv"
+
+# ---------------------------------------------------------------------------
+# Detecção de movimento por diferença de quadros
+#
+# A pipeline deriva uma cópia 80×45 em tons de cinza a 5 fps e compara quadros
+# consecutivos. Custa pouca CPU, mas não é grátis: deixe desligado se o próprio
+# NVR já faz detecção.
+# ---------------------------------------------------------------------------
+
+[motion]
+enabled = false
+
+# Diferença mínima por pixel (0–255) para contá-lo como alterado.
+# Menor = mais sensível a ruído de sensor e a mudanças de iluminação.
+threshold = 24
+
+# Fração da imagem que precisa mudar para disparar (0.0–1.0).
+sensitivity = 0.02
+
+# Tempo mínimo entre dois disparos da mesma câmera.
+cooldown_secs = 10
+
+# Manda uma notificação do desktop a cada detecção.
+notify = false
+
+# ---------------------------------------------------------------------------
+# Notificações e ícone na bandeja
+# ---------------------------------------------------------------------------
+
+[notifications]
+# Avisa quando uma câmera fica offline e quando volta.
+enabled = true
+
+# Só notifica a partir desta tentativa de reconexão, para não alarmar com uma
+# queda de um segundo.
+offline_after_attempts = 2
+
+# Ícone na bandeja (StatusNotifierItem). No GNOME exige a extensão
+# AppIndicator; sem ela o dashboard funciona igual, só não aparece o ícone.
+tray = true
