@@ -143,12 +143,26 @@ cargo build --release
 **Instalando no sistema** (binário, `.desktop` e ícone):
 
 ```sh
-make                 # compila em release
-sudo make install    # PREFIX=/usr/local por padrão
-make user-config     # cria ~/.config/nvr-dashboard/cameras.toml (ajustes, modo 600)
+sudo make install      # compila e instala (PREFIX=/usr/local por padrão)
+sudo make uninstall    # remove o que foi instalado
 ```
 
-Depois disso o app aparece no menu do GNOME. Para remover: `sudo make uninstall`.
+Só isso. Depois de instalar, o app aparece no menu do GNOME como **NVR Dashboard**
+e também abre pelo terminal com `nvr-dashboard` (`/usr/local/bin` costuma estar no
+`PATH`). Na primeira execução ele abre sem câmeras: cadastre-as pela janela.
+
+- **Compila como o seu usuário.** Sob `sudo`, o `make` executa o `cargo` como quem
+  chamou o `sudo` (`$SUDO_USER`), não como root — o root não tem o Rust do `rustup`
+  configurado, e compilar como root deixaria o `target/` dele. Se o `rustup` do seu
+  usuário ainda não tem toolchain, rode `rustup default stable` uma vez.
+- **Compilar sem instalar:** `make` (ou `cargo build --release`).
+- **Outro prefixo:** `sudo make install PREFIX=/usr` (ex.: para empacotar, use
+  também `DESTDIR=/caminho/temporario`).
+- **`sudo make uninstall` mantém os seus dados** (câmeras, layout, ajustes em
+  `~/.config/nvr-dashboard`). Para apagá-los também: `rm -r ~/.config/nvr-dashboard`.
+- **Ajustes opcionais** (gravação, movimento…): `make user-config` cria
+  `~/.config/nvr-dashboard/cameras.toml` (modo 600) a partir do exemplo. Roda com ou
+  sem `sudo`; o arquivo sempre fica com o seu usuário.
 
 ---
 
