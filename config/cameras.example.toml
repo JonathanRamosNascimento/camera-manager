@@ -24,10 +24,11 @@ latency_ms = 200
 rtsp_protocols = "tcp"
 
 # Decodificação por hardware (VA-API / NVDEC) quando disponível.
-# Ponha `false` para forçar decoders de software — útil para isolar problemas
-# de driver em notebooks com GPU híbrida. O ganho é pequeno: 3 streams custam
-# ~0,3 de um núcleo com hardware contra ~0,4 sem.
-hardware_decoding = true
+# Desligado (padrão): força decoders de software, porque alguns drivers
+# VA-API/MSDK aceitam o fluxo e nunca entregam quadro. O ganho do hardware é
+# pequeno: 3 streams custam ~0,3 de um núcleo contra ~0,4 sem. Ponha `true` se
+# o seu driver funcionar.
+hardware_decoding = false
 
 # Colunas do grid. Comente para automático: ceil(sqrt(nº de câmeras)),
 # ou seja 1 câmera → 1×1, 2–4 → 2×2, 5–9 → 3×3.
@@ -49,11 +50,11 @@ stall_timeout_secs = 12
 # framerate. O vídeo passa a aparecer em 1–2 s em vez de dezenas de segundos.
 wait_for_keyframe = true
 
-# Converte o vídeo para RGB antes de exibir. Desligado (padrão), o frame
-# decodificado vai direto ao sink, sem copiar para a CPU. Ligue se a imagem
-# aparecer com cores erradas (roxo/verde) — típico de sessões sem aceleração
-# gráfica (remotas, Broadway). Custa uma conversão por quadro na CPU.
-convert_video = false
+# Converte o vídeo para RGB antes de exibir. Ligado (padrão) evita o erro
+# "not-negotiated" / "Reconectando" eterno em GStreamers mais antigos
+# (Ubuntu/Mint) e as cores erradas em sessões sem GPU. Desligue para o frame
+# ir direto ao sink, sem cópia para a CPU, se o seu sistema aceitar.
+convert_video = true
 
 # Quanto tolerar "dados chegando, nenhum quadro decodificável" antes de
 # reiniciar. Precisa ser MAIOR que o intervalo de I-frame do NVR, senão a

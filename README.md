@@ -467,8 +467,8 @@ rtsp://{user_enc}:{password_enc}@{host}:{port}/user={user}&password={password}&c
 |---|---|---|
 | `latency_ms` | `200` | Buffer de jitter do `rtspsrc` |
 | `rtsp_protocols` | `"tcp"` | `tcp`, `udp` ou `tcp+udp` |
-| `hardware_decoding` | `true` | Decoders VA-API/NVDEC quando existirem; `false` força software. Ver [Problemas conhecidos](#problemas-conhecidos) |
-| `convert_video` | `false` | Converte para RGB antes de exibir. Ligue se as **cores** saírem erradas (roxo/verde) em sessões sem aceleração gráfica (remotas, Broadway) |
+| `hardware_decoding` | `false` | `true` usa decoders VA-API/NVDEC quando existirem; `false` (padrão) força software, mais compatível. Ver [Problemas conhecidos](#problemas-conhecidos) |
+| `convert_video` | `true` | Converte para RGB antes de exibir. Evita `not-negotiated`/"Reconectando" eterno (colorimetria inválida em GStreamers mais antigos, como Ubuntu/Mint) e cores erradas sem GPU. Desligue para poupar CPU se o seu sistema aceitar |
 | `grid_columns` | automático | Colunas fixas do grid |
 | `stall_timeout_secs` | `12` | Sem dados do NVR por este tempo → reinicia |
 | `wait_for_keyframe` | `true` | Segura a exibição até o primeiro keyframe |
@@ -840,7 +840,8 @@ gst-launch-1.0 rtspsrc location="rtsp://…" latency=200 ! decodebin ! autovideo
 | `SEM RESPOSTA` no `--check` | IP, porta e rede; o NVR está ligado? |
 | Abre sem nenhuma câmera | normal na primeira execução (ou após migrar): use **Escanear a rede** |
 | Imagem esverdeada no início | normal com GOP longo; ver acima. Reduza o I-frame no NVR |
-| Cores erradas o tempo todo | sessão sem GPU: `convert_video = true` |
+| Cores erradas o tempo todo | sessão sem GPU: mantenha `convert_video = true` (padrão) |
+| "Reconectando" eterno com `not-negotiated` no log | `convert_video = true` (padrão); com `false`, GStreamers antigos recusam a colorimetria do fluxo |
 | Fica em "Aguardando keyframe…" para sempre | aumente `keyframe_timeout_secs` acima do GOP do NVR |
 | `sem dados do NVR há Ns` | rede instável; tente `rtsp_protocols = "tcp"` e aumente `latency_ms` |
 | Sem som ao clicar no alto-falante | log "não consegui ligar o áudio": falta `gst-plugin-pipewire`/Pulse; ou a câmera não tem microfone |

@@ -112,9 +112,10 @@ pub struct App {
     /// `false` rebaixa esses decoders no registro, forçando software (`avdec_*`).
     ///
     /// O ganho aqui é pequeno (3 streams custam ~0,3 de um núcleo com hardware
-    /// contra ~0,4 sem), então `false` é uma saída perfeitamente boa se algum
-    /// driver der problema.
-    #[serde(default = "default_true")]
+    /// contra ~0,4 sem), então o padrão é `false`: em alguns drivers VA-API/MSDK
+    /// (visto em notebooks Intel com Ubuntu/Mint) o decoder aceita o fluxo e nunca
+    /// entrega quadro. Ligue se o seu driver funcionar.
+    #[serde(default)]
     pub hardware_decoding: bool,
     /// Transportes RTSP aceitos, na sintaxe de flags do GStreamer (`tcp`, `udp`,
     /// `tcp+udp`). TCP é mais confiável em Wi-Fi; UDP tem latência menor.
@@ -135,12 +136,14 @@ pub struct App {
     pub wait_for_keyframe: bool,
     /// Converte o vídeo para RGB (`videoconvert`) antes de exibir.
     ///
-    /// Desligado (padrão), o frame decodificado vai direto ao sink, sem cópia
-    /// para a CPU. Ligue se a imagem aparecer com **cores erradas** (roxo/verde),
-    /// o que acontece em sessões sem aceleração gráfica, como remotas ou
-    /// Broadway: RGB é o formato que qualquer renderizador sabe desenhar. Custa
-    /// uma conversão por quadro na CPU.
-    #[serde(default)]
+    /// Ligado (padrão), o `videoconvert` normaliza os caps: sem ele, alguns
+    /// fluxos H.264 declaram uma colorimetria inválida e o `gtk4paintablesink`
+    /// de GStreamers mais antigos (Ubuntu/Mint) os recusa com `not-negotiated`,
+    /// deixando a câmera em "Reconectando" para sempre. Também corrige as
+    /// **cores erradas** (roxo/verde) em sessões sem aceleração gráfica.
+    /// Desligue para o frame decodificado ir direto ao sink, sem cópia para a
+    /// CPU, se o seu GStreamer aceitar o fluxo. Custa uma conversão por quadro.
+    #[serde(default = "default_true")]
     pub convert_video: bool,
     /// Quanto tempo tolerar "dados chegando, nenhum quadro decodificável".
     ///
@@ -236,11 +239,11 @@ impl Default for App {
         Self {
             latency_ms: default_latency_ms(),
             grid_columns: None,
-            hardware_decoding: true,
+            hardware_decoding: false,
             rtsp_protocols: default_rtsp_protocols(),
             stall_timeout_secs: default_stall_timeout_secs(),
             wait_for_keyframe: true,
-            convert_video: false,
+            convert_video: true,
             keyframe_timeout_secs: default_keyframe_timeout_secs(),
             reconnect_initial_secs: default_reconnect_initial_secs(),
             reconnect_max_secs: default_reconnect_max_secs(),
@@ -508,11 +511,11 @@ mod tests {
         assert_eq!(config.app.latency_ms, 200);
         assert_eq!(config.app.rtsp_protocols, "tcp");
         assert_eq!(config.app.grid_columns, None);
-        assert!(config.app.hardware_decoding);
+        assert!(!config.app.hardware_decoding);
         assert!(!config.app.adaptive_stream);
         assert_eq!(config.app.substream_index, 1);
         assert!(config.app.wait_for_keyframe);
-        assert!(!config.app.convert_video);
+        assert!(config.app.convert_video);
         assert_eq!(config.app.keyframe_timeout_secs, 90);
         assert_eq!(config.recording.container, "mkv");
         assert!(!config.motion.enabled);
