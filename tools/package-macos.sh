@@ -44,7 +44,10 @@ mkdir -p "$MACOS" "$RES/lib/gstreamer-1.0" "$RES/libexec/gstreamer-1.0" "$RES/sh
 cp "target/release/$NAME" "$MACOS/$NAME"
 
 echo "==> Plugins do GStreamer"
-cp "$BREW"/lib/gstreamer-1.0/*.dylib "$RES/lib/gstreamer-1.0/"
+for p in "$BREW"/lib/gstreamer-1.0/*.dylib; do
+    # o brew deixa symlinks quebrados de plugins cujas dependências não estão instaladas
+    [ -e "$p" ] && cp "$p" "$RES/lib/gstreamer-1.0/"
+done
 cp "$GTK4_PLUGIN_DYLIB" "$RES/lib/gstreamer-1.0/"
 SCANNER_SRC="$(find "$BREW/opt/gstreamer" -name gst-plugin-scanner -type f | head -n1)"
 cp "$SCANNER_SRC" "$RES/libexec/gstreamer-1.0/gst-plugin-scanner"

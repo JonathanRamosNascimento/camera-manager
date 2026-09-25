@@ -75,7 +75,7 @@ if [ -z "$ISCC" ] && [ -x "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then
 fi
 if [ -n "$ISCC" ]; then
     echo "==> Instalador (Inno Setup)"
-    "$ISCC" "/DAppVersion=$VERSION" "/DSourceDir=$(cygpath -w "$DIST")" \
+    MSYS2_ARG_CONV_EXCL="*" "$ISCC" "/DAppVersion=$VERSION" "/DSourceDir=$(cygpath -w "$DIST")" \
         "/DOutputDir=$(cygpath -w "$OUT")" "$(cygpath -w "$ROOT/packaging/windows/nvr-dashboard.iss")"
 else
     echo "AVISO: Inno Setup (ISCC.exe) não encontrado; só o .zip foi gerado." >&2
