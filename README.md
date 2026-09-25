@@ -63,7 +63,7 @@ gravação em cada tile._
 - Detecção de movimento por diferença de quadros, com sensibilidade e cooldown configuráveis
 - Notificações do desktop quando uma câmera cai e quando volta
 - Ícone na bandeja (StatusNotifierItem) com resumo e menu
-- Cards redimensionáveis (arrastando as divisórias) e reordenáveis (arrastando o card); layout salvo entre execuções
+- Cards com tamanho independente (arrastando borda/canto), reordenáveis (arrastando o card) e realocados automaticamente quando invadidos; layout salvo entre execuções
 - Substream no grid e stream principal em tela cheia (`adaptive_stream`), para poupar CPU e banda
 - Vários NVRs / câmeras IP no mesmo dashboard
 
@@ -246,26 +246,31 @@ comando a rodar quando algo não funciona.
 
 Cada tile também tem botões de captura e gravação na faixa superior.
 
-### Redimensionar os cards
+### Redimensionar e reorganizar os cards
 
-Na primeira abertura (sem `layout.toml`) todos os cards têm o mesmo tamanho; se
-a última linha ficar incompleta, o espaço que sobra fica vazio em vez de
-esticar o card. Só o que **você** arrasta é salvo — o layout inicial nunca é
-gravado sozinho.
+O grid é feito de **células**, e cada card ocupa `largura × altura` células, com
+tamanho **próprio**: mexer num card nunca altera o tamanho dos outros.
 
-Arraste a divisória entre dois cards (horizontal ou vertical) para mudar o
-tamanho relativo deles — por exemplo, deixar a câmera 3 maior que as outras. A
-proporção acompanha o redimensionamento da janela e é salva 0,5 s depois de
-soltar, em `$XDG_CONFIG_HOME/nvr-dashboard/layout.toml` (padrão
-`~/.config/nvr-dashboard/layout.toml`). Se o número de câmeras ou de colunas
-mudar, o layout salvo é ignorado. Para voltar à divisão igual, apague o arquivo.
+- **Redimensionar:** arraste a borda direita, a borda de baixo ou o canto
+  (marcado no canto inferior direito) de um card. O tamanho encaixa nas células.
+  Dá para esticar um card até o fim da janela.
+- **Quem for invadido é realocado:** se o card cresce sobre outro, o invadido vai
+  para o espaço livre mais próximo — de preferência para o lado (ex.: um card
+  esticado até embaixo joga o que estava ali para a célula vazia ao lado). Sem
+  espaço livre, ele encolhe o mínimo necessário; só em último caso desce para uma
+  linha nova. Encolher o card de volta, na mesma tacada, devolve os outros.
+- **Mover:** arraste um card e solte sobre **outro** (os dois trocam de lugar e
+  de tamanho) ou sobre uma **célula vazia** (o card vai para lá).
+- **Primeira abertura:** todos os cards têm o mesmo tamanho (`1×1`, preenchendo
+  linha a linha); células que sobram ficam vazias.
 
-### Reordenar os cards
-
-Arraste um card e solte sobre outro: os dois trocam de lugar (o card de destino
-ganha uma borda amarela durante o arrasto). A ordem é salva no mesmo
-`layout.toml`. Cada posição do grid mantém o tamanho que tinha, então o card
-assume o tamanho do espaço para onde foi.
+Posição e tamanho de cada card são salvos ~0,5 s depois da mudança em
+`$XDG_CONFIG_HOME/nvr-dashboard/layout.toml` (padrão
+`~/.config/nvr-dashboard/layout.toml`), por câmera (`<dispositivo>/<canal>`).
+Câmeras novas entram na primeira célula livre. Se o **número de colunas** mudar
+(ex.: ao passar de 4 para 5 câmeras o grid vai de 2 para 3 colunas), o layout
+salvo é descartado e todos voltam ao mesmo tamanho. Para voltar ao padrão a
+qualquer momento, apague o arquivo.
 
 ### Qualidade da imagem
 

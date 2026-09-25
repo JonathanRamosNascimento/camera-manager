@@ -891,7 +891,8 @@ fn build_window(app: &gtk::Application, bootstrap: &Bootstrap) -> SupervisorsDon
         config: Rc::clone(&config),
     });
 
-    // Câmeras já cadastradas.
+    // Câmeras já cadastradas: entram juntas, com um único cálculo de layout.
+    dashboard.grid.set_batch(true);
     for device in &devices {
         // Em variável à parte: o `Ref` temporário viveria durante todo o `for`
         // e faria `spawn_camera` estourar em `borrow_mut`.
@@ -900,6 +901,7 @@ fn build_window(app: &gtk::Application, bootstrap: &Bootstrap) -> SupervisorsDon
             dashboard.spawn_camera(camera);
         }
     }
+    dashboard.grid.set_batch(false);
     dashboard.cameras_changed();
 
     spawn_loops(&dashboard, events_rx, actions_rx, tray_cmd_rx);

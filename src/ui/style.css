@@ -156,3 +156,35 @@ window.nvr-dashboard {
 .error-text {
     color: #f87171;
 }
+
+/* ---- alças de redimensionamento dos cards ------------------------------- */
+
+.resize-handle {
+    background: transparent;
+    transition: background 120ms;
+}
+
+.resize-right,
+.resize-bottom {
+    min-width: 8px;
+    min-height: 8px;
+}
+
+.resize-right:hover,
+.resize-bottom:hover {
+    background: rgba(120, 170, 255, 0.35);
+}
+
+.resize-corner {
+    min-width: 18px;
+    min-height: 18px;
+    margin: 0;
+    border-right: 3px solid rgba(255, 255, 255, 0.30);
+    border-bottom: 3px solid rgba(255, 255, 255, 0.30);
+    border-bottom-right-radius: 10px;
+}
+
+.resize-corner:hover {
+    border-color: rgba(120, 170, 255, 0.95);
+    background: rgba(120, 170, 255, 0.20);
+}
