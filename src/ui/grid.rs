@@ -79,7 +79,13 @@ fn default_layout(count: usize, cols: usize) -> Vec<Rect> {
 /// Linhas da grade: as necessárias para `count` cards ou para a maior base.
 fn rows_for(rects: &[Rect], count: usize, cols: usize) -> usize {
     let needed = count.div_ceil(cols.max(1));
-    rects.iter().map(Rect::bottom).max().unwrap_or(0).max(needed).max(1)
+    rects
+        .iter()
+        .map(Rect::bottom)
+        .max()
+        .unwrap_or(0)
+        .max(needed)
+        .max(1)
 }
 
 fn is_free(candidate: &Rect, placed: &[Rect]) -> bool {
@@ -98,7 +104,12 @@ fn first_free(placed: &[Rect], cols: usize, w: usize, h: usize) -> Rect {
             }
         }
     }
-    Rect { x: 0, y: limit, w, h }
+    Rect {
+        x: 0,
+        y: limit,
+        w,
+        h,
+    }
 }
 
 /// Acha um lugar para `orig`, que foi invadido por outro card.
@@ -338,7 +349,12 @@ impl Shared {
         if self.saved_columns.get() != self.columns.get() {
             saved.clear();
         }
-        saved.extend(self.entries.borrow().iter().map(|e| (e.key.clone(), e.rect)));
+        saved.extend(
+            self.entries
+                .borrow()
+                .iter()
+                .map(|e| (e.key.clone(), e.rect)),
+        );
         self.saved_columns.set(self.columns.get());
     }
 
@@ -359,7 +375,12 @@ impl Shared {
                 .grid
                 .layout_manager()
                 .and_then(|manager| manager.downcast::<gtk::GridLayout>().ok())
-                .and_then(|layout| layout.layout_child(&entry.widget).downcast::<gtk::GridLayoutChild>().ok())
+                .and_then(|layout| {
+                    layout
+                        .layout_child(&entry.widget)
+                        .downcast::<gtk::GridLayoutChild>()
+                        .ok()
+                })
             {
                 child.set_column(x as i32);
                 child.set_row(y as i32);
@@ -483,9 +504,27 @@ fn install_resize_handles(id: usize, tile: &gtk::Widget) {
         return;
     };
     for (edge, class, cursor, halign, valign) in [
-        (Edge::Right, "resize-right", "e-resize", gtk::Align::End, gtk::Align::Fill),
-        (Edge::Bottom, "resize-bottom", "s-resize", gtk::Align::Fill, gtk::Align::End),
-        (Edge::Corner, "resize-corner", "se-resize", gtk::Align::End, gtk::Align::End),
+        (
+            Edge::Right,
+            "resize-right",
+            "e-resize",
+            gtk::Align::End,
+            gtk::Align::Fill,
+        ),
+        (
+            Edge::Bottom,
+            "resize-bottom",
+            "s-resize",
+            gtk::Align::Fill,
+            gtk::Align::End,
+        ),
+        (
+            Edge::Corner,
+            "resize-corner",
+            "se-resize",
+            gtk::Align::End,
+            gtk::Align::End,
+        ),
     ] {
         let handle = gtk::Box::builder()
             .name(format!("{HANDLE_PREFIX}{id}:{}", edge.tag()))
@@ -514,7 +553,9 @@ fn install_resize_gesture(shared: &Rc<Shared>) {
     {
         let (shared, state) = (Rc::downgrade(shared), Rc::clone(&state));
         drag.connect_drag_begin(move |gesture, x, y| {
-            let Some(shared) = shared.upgrade() else { return };
+            let Some(shared) = shared.upgrade() else {
+                return;
+            };
             let hit = shared
                 .grid
                 .pick(x, y, gtk::PickFlags::DEFAULT)
@@ -529,7 +570,9 @@ fn install_resize_gesture(shared: &Rc<Shared>) {
                 gesture.set_state(gtk::EventSequenceState::Denied);
                 return;
             };
-            let Some(index) = shared.index_of(id) else { return };
+            let Some(index) = shared.index_of(id) else {
+                return;
+            };
             // Reivindica a sequência: impede o clique (abrir em tela cheia) e o
             // arrastar-para-reordenar de dispararem junto.
             gesture.set_state(gtk::EventSequenceState::Claimed);
@@ -544,7 +587,9 @@ fn install_resize_gesture(shared: &Rc<Shared>) {
     {
         let (shared, state) = (Rc::downgrade(shared), Rc::clone(&state));
         drag.connect_drag_update(move |_, offset_x, offset_y| {
-            let Some(shared) = shared.upgrade() else { return };
+            let Some(shared) = shared.upgrade() else {
+                return;
+            };
             let solved = {
                 let guard = state.borrow();
                 let Some(drag) = guard.as_ref() else { return };
@@ -730,7 +775,12 @@ impl GridView {
             key,
             id,
             widget,
-            rect: Rect { x: 0, y: 0, w: 1, h: 1 },
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 1,
+                h: 1,
+            },
         });
         if !self.shared.batching.get() {
             self.shared.relayout();
@@ -883,10 +933,20 @@ mod tests {
             for target in 0..count {
                 for w in 1..=(cols - base[target].x) {
                     for h in 1..=(rows - base[target].y) {
-                        let want = Rect { w, h, ..base[target] };
+                        let want = Rect {
+                            w,
+                            h,
+                            ..base[target]
+                        };
                         let solved = solve(&base, target, want, cols, rows);
-                        assert!(no_overlap(&solved), "{count} cards, alvo {target}, {w}×{h}: {solved:?}");
-                        assert_eq!(solved[target], want, "o card redimensionado fica como pedido");
+                        assert!(
+                            no_overlap(&solved),
+                            "{count} cards, alvo {target}, {w}×{h}: {solved:?}"
+                        );
+                        assert_eq!(
+                            solved[target], want,
+                            "o card redimensionado fica como pedido"
+                        );
                         assert!(solved.iter().all(|c| c.fits_in(cols)));
                     }
                 }

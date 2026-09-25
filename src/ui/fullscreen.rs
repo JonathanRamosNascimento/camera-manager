@@ -16,8 +16,8 @@ use gtk::{gdk, pango};
 
 use crate::camera::Camera;
 use crate::reconnect::CameraState;
-use crate::ui::{UiAction, camera_tile};
 use crate::ui::camera_tile::describe;
+use crate::ui::{UiAction, camera_tile};
 
 const STATUS_CLASSES: [&str; 3] = ["status-live", "status-connecting", "status-error"];
 

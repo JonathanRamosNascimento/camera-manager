@@ -132,6 +132,15 @@ pub struct App {
     /// preferir ver a imagem se formando aos poucos.
     #[serde(default = "default_true")]
     pub wait_for_keyframe: bool,
+    /// Converte o vídeo para RGB (`videoconvert`) antes de exibir.
+    ///
+    /// Desligado (padrão), o frame decodificado vai direto ao sink, sem cópia
+    /// para a CPU. Ligue se a imagem aparecer com **cores erradas** (roxo/verde),
+    /// o que acontece em sessões sem aceleração gráfica, como remotas ou
+    /// Broadway: RGB é o formato que qualquer renderizador sabe desenhar. Custa
+    /// uma conversão por quadro na CPU.
+    #[serde(default)]
+    pub convert_video: bool,
     /// Quanto tempo tolerar "dados chegando, nenhum quadro decodificável".
     ///
     /// Precisa ser maior que o intervalo de I-frame do NVR, senão a pipeline
@@ -230,6 +239,7 @@ impl Default for App {
             rtsp_protocols: default_rtsp_protocols(),
             stall_timeout_secs: default_stall_timeout_secs(),
             wait_for_keyframe: true,
+            convert_video: false,
             keyframe_timeout_secs: default_keyframe_timeout_secs(),
             reconnect_initial_secs: default_reconnect_initial_secs(),
             reconnect_max_secs: default_reconnect_max_secs(),
@@ -486,6 +496,7 @@ mod tests {
         assert!(!config.app.adaptive_stream);
         assert_eq!(config.app.substream_index, 1);
         assert!(config.app.wait_for_keyframe);
+        assert!(!config.app.convert_video);
         assert_eq!(config.app.keyframe_timeout_secs, 90);
         assert_eq!(config.recording.container, "mkv");
         assert!(!config.motion.enabled);
@@ -528,13 +539,17 @@ mod tests {
 
     #[test]
     fn rejeita_container_desconhecido() {
-        let err = parse("[recording]\ncontainer = \"avi\"\n").unwrap_err().to_string();
+        let err = parse("[recording]\ncontainer = \"avi\"\n")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("recording.container"), "erro: {err}");
     }
 
     #[test]
     fn rejeita_sensibilidade_fora_da_faixa() {
-        let err = parse("[motion]\nsensitivity = 1.5\n").unwrap_err().to_string();
+        let err = parse("[motion]\nsensitivity = 1.5\n")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("motion.sensitivity"), "erro: {err}");
     }
 
@@ -556,6 +571,7 @@ mod tests {
             rtsp_protocols = "tcp+udp"
             stall_timeout_secs = 20
             wait_for_keyframe = false
+            convert_video = true
             keyframe_timeout_secs = 45
             reconnect_initial_secs = 1
             reconnect_max_secs = 120
@@ -586,6 +602,7 @@ mod tests {
         assert!(config.app.adaptive_stream);
         assert_eq!(config.app.substream_index, 2);
         assert!(!config.app.wait_for_keyframe);
+        assert!(config.app.convert_video);
         assert_eq!(config.app.keyframe_timeout_secs, 45);
         assert_eq!(config.recording.max_files, 10);
         assert!(config.motion.notify);

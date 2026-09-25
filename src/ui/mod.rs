@@ -42,8 +42,7 @@ use crate::config::{Config, Secret};
 use crate::notify::{Notifier, TrayCommand, TraySummary};
 use crate::pipeline::{self, CameraPipeline, PipelineOptions, StreamStats};
 use crate::reconnect::{
-    self,
-    Backoff, CameraEvent, CameraState, Command, EventKind, RecordingStatus, Supervisor,
+    self, Backoff, CameraEvent, CameraState, Command, EventKind, RecordingStatus, Supervisor,
 };
 use crate::recording::RecordingOptions;
 use crate::store::{Device, Store};
@@ -275,7 +274,8 @@ impl Dashboard {
         let Some(slot) = self.slot(id) else {
             return;
         };
-        self.fullscreen.show(&slot.named_camera(), slot.paintable.as_ref());
+        self.fullscreen
+            .show(&slot.named_camera(), slot.paintable.as_ref());
         self.fullscreen.set_state(&slot.state.borrow());
         self.fullscreen.set_recording(slot.recording_active.get());
         self.sync_listening();
@@ -317,7 +317,10 @@ impl Dashboard {
         };
         self.fullscreen.clear();
         if let Some(slot) = self.slot(id) {
-            self.send(id, Command::UseStream(slot.camera.stream_for(slot.quality.get())));
+            self.send(
+                id,
+                Command::UseStream(slot.camera.stream_for(slot.quality.get())),
+            );
             slot.tile.widget().grab_focus();
         }
         self.refresh_page();
@@ -378,7 +381,9 @@ impl Dashboard {
         let added = self.store.borrow_mut().add(device.clone())?;
         if let Err(err) = self.store.borrow().save() {
             tracing::error!(erro = %format!("{err:#}"), "não consegui salvar o cadastro");
-            self.toast(&format!("Câmeras adicionadas, mas não consegui salvar: {err:#}"));
+            self.toast(&format!(
+                "Câmeras adicionadas, mas não consegui salvar: {err:#}"
+            ));
         }
 
         let stored = self
@@ -440,7 +445,8 @@ impl Dashboard {
             .rename_channel(&slot.camera.nvr_id, slot.camera.channel, name);
         self.save_store();
         if self.fullscreen.current() == Some(id) {
-            self.fullscreen.show(&slot.named_camera(), slot.paintable.as_ref());
+            self.fullscreen
+                .show(&slot.named_camera(), slot.paintable.as_ref());
         }
         self.cameras_changed();
     }
@@ -495,7 +501,13 @@ impl Dashboard {
         let urls = Arc::new(UrlTemplate::new(&updated));
         for entry in &updated.channels {
             let id = self.slots.borrow().len();
-            self.spawn_camera(camera::build_one(id, &updated, &urls, entry, &self.config.app));
+            self.spawn_camera(camera::build_one(
+                id,
+                &updated,
+                &urls,
+                entry,
+                &self.config.app,
+            ));
         }
         self.grid.set_batch(false);
         self.cameras_changed();
@@ -573,7 +585,9 @@ impl Dashboard {
                     Arc::clone(&built.handle.stats),
                     &self.spawner.actions,
                 );
-                self.pipelines.borrow_mut().push(built.handle.pipeline.clone());
+                self.pipelines
+                    .borrow_mut()
+                    .push(built.handle.pipeline.clone());
 
                 match self.spawner.done.borrow().clone() {
                     Some(done_guard) => {
@@ -620,8 +634,7 @@ impl Dashboard {
             }
         };
 
-        self.grid
-            .add(camera.pref_key(), id, tile.widget().clone());
+        self.grid.add(camera.pref_key(), id, tile.widget().clone());
         let mut slots = self.slots.borrow_mut();
         debug_assert_eq!(slots.len(), id, "ids de câmera são sequenciais");
         slots.push(Some(Rc::new(Slot {
@@ -766,12 +779,9 @@ impl Dashboard {
                     CameraState::Live => self.notifier.camera_recovered(id, &name),
                     CameraState::Reconnecting {
                         attempt, reason, ..
-                    } => self
-                        .notifier
-                        .camera_offline(id, &name, *attempt, reason),
+                    } => self.notifier.camera_offline(id, &name, *attempt, reason),
                     CameraState::Failed(reason) => {
-                        self.notifier
-                            .camera_offline(id, &name, u32::MAX, reason)
+                        self.notifier.camera_offline(id, &name, u32::MAX, reason)
                     }
                     // Nem "conectando" nem "aguardando keyframe" são falha:
                     // não geram notificação.
@@ -925,7 +935,11 @@ fn empty_page(actions: &async_channel::Sender<UiAction>) -> gtk::Widget {
         .build();
     buttons.append(&button("Escanear a rede", UiAction::ScanNetwork, true));
     buttons.append(&button("Adicionar manualmente", UiAction::AddManual, false));
-    buttons.append(&button("Abrir lista de câmeras", UiAction::ShowCameras, false));
+    buttons.append(&button(
+        "Abrir lista de câmeras",
+        UiAction::ShowCameras,
+        false,
+    ));
     page.append(&buttons);
     page.upcast()
 }

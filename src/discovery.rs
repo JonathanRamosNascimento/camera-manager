@@ -52,7 +52,10 @@ pub struct Found {
 #[derive(Debug, Clone)]
 pub enum ScanEvent {
     /// `feitos` de `total` IPs verificados.
-    Progress { done: usize, total: usize },
+    Progress {
+        done: usize,
+        total: usize,
+    },
     /// Achou (ou atualizou) um dispositivo.
     Found(Found),
     Finished,
@@ -230,7 +233,10 @@ fn onvif_name(response: &str) -> String {
         response
             .split_whitespace()
             .flat_map(|word| word.split(['<', '>']))
-            .find_map(|word| word.split_once(&format!("onvif.org/{key}/")).map(|(_, v)| v))
+            .find_map(|word| {
+                word.split_once(&format!("onvif.org/{key}/"))
+                    .map(|(_, v)| v)
+            })
             .map(|value| value.replace("%20", " "))
             .filter(|value| !value.is_empty())
     };
@@ -498,6 +504,10 @@ mod tests {
     fn resultado_descreve_para_a_interface() {
         assert!(ProbeResult::Video("H265".into()).is_video());
         assert!(!ProbeResult::NoData.is_video());
-        assert!(ProbeResult::Video("H264".into()).describe().contains("H264"));
+        assert!(
+            ProbeResult::Video("H264".into())
+                .describe()
+                .contains("H264")
+        );
     }
 }

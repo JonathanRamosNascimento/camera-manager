@@ -99,6 +99,9 @@ impl CameraTile {
             .ellipsize(EllipsizeMode::End)
             .xalign(0.0)
             .hexpand(true)
+            // O nome tem prioridade sobre o resumo técnico: sem um mínimo, num
+            // card estreito ele viraria "Cam…".
+            .width_chars(10)
             .build();
         name.set_tooltip_text(Some(&format!(
             "NVR {} · canal {} · stream {}\n{}",
@@ -114,6 +117,8 @@ impl CameraTile {
         let detail = gtk::Label::builder()
             .label("—")
             .css_classes(["tile-detail"])
+            // Encolhe (com "…") antes de espremer o nome.
+            .ellipsize(EllipsizeMode::End)
             .build();
 
         // Seletor de qualidade: só existe se o NVR expõe um substream.
@@ -309,11 +314,8 @@ impl CameraTile {
     /// Eles divergem enquanto a câmera está fora do ar com gravação pendente.
     /// Reflete se o áudio desta câmera está sendo ouvido.
     pub fn set_listening(&self, on: bool) {
-        self.listen_button.set_icon_name(if on {
-            LISTEN_ON_ICON
-        } else {
-            LISTEN_OFF_ICON
-        });
+        self.listen_button
+            .set_icon_name(if on { LISTEN_ON_ICON } else { LISTEN_OFF_ICON });
         self.listen_button.set_tooltip_text(Some(if on {
             "Parar de ouvir (Ctrl+M)"
         } else {
@@ -329,11 +331,8 @@ impl CameraTile {
     pub fn set_recording(&self, active: bool, wanted: bool) {
         self.recording.set(active);
         self.rec_badge.set_visible(active);
-        self.record_button.set_icon_name(if wanted {
-            STOP_ICON
-        } else {
-            RECORD_ICON
-        });
+        self.record_button
+            .set_icon_name(if wanted { STOP_ICON } else { RECORD_ICON });
         // Vermelho enquanto grava: o estado salta aos olhos.
         if wanted {
             self.record_button.add_css_class("recording-on");

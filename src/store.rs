@@ -338,7 +338,10 @@ mod tests {
         s.add(device("10.0.0.5", &[1, 2])).unwrap();
         s.save().unwrap();
 
-        let mode = fs::metadata(dir.join("devices.toml")).unwrap().permissions().mode();
+        let mode = fs::metadata(dir.join("devices.toml"))
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o600);
 
         let back = store(&dir);
@@ -403,7 +406,14 @@ mod tests {
         let mut s = store(&dir);
         s.add(device("10.0.0.5", &[1, 2])).unwrap();
         let updated = s
-            .update_device("10.0.0.5:554", "10.0.0.5", 554, "admin", Some(Secret::new("nova")), None)
+            .update_device(
+                "10.0.0.5:554",
+                "10.0.0.5",
+                554,
+                "admin",
+                Some(Secret::new("nova")),
+                None,
+            )
             .unwrap();
         assert_eq!(updated.password.expose(), "nova");
         s.rename_channel("10.0.0.5:554", 2, "  Quintal ");

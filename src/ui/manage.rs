@@ -14,9 +14,9 @@ use gtk::{gio, glib};
 
 use super::{Dashboard, Slot};
 use crate::camera::Quality;
-use crate::reconnect::CameraState;
 use crate::config::{DEFAULT_URL_TEMPLATE, Secret};
 use crate::discovery::{self, Found, ProbeResult, ScanEvent};
+use crate::reconnect::CameraState;
 use crate::store::{ChannelEntry, DEFAULT_RTSP_PORT, Device, parse_channels};
 
 /// Canais testados por "Detectar canais".
@@ -29,7 +29,9 @@ thread_local! {
 }
 
 /// Traz para a frente a janela guardada em `slot`, se ainda existir.
-fn present_existing(slot: &'static std::thread::LocalKey<RefCell<Option<glib::WeakRef<gtk::Window>>>>) -> bool {
+fn present_existing(
+    slot: &'static std::thread::LocalKey<RefCell<Option<glib::WeakRef<gtk::Window>>>>,
+) -> bool {
     slot.with(|cell| {
         if let Some(window) = cell
             .borrow()
@@ -410,7 +412,10 @@ pub(super) fn show_edit_camera(dash: &Rc<Dashboard>, id: usize) {
         .placeholder_text("deixe vazio para manter a atual")
         .activates_default(true)
         .build();
-    let template = entry(device.url_template.as_deref().unwrap_or(""), DEFAULT_URL_TEMPLATE);
+    let template = entry(
+        device.url_template.as_deref().unwrap_or(""),
+        DEFAULT_URL_TEMPLATE,
+    );
 
     let grid = gtk::Grid::builder()
         .row_spacing(8)
@@ -645,12 +650,21 @@ pub(super) fn show_add_device(dash: &Rc<Dashboard>, prefill: Option<Prefill>) {
 
     let form = Form {
         name: entry(
-            prefill.as_ref().and_then(|p| p.name.as_deref()).unwrap_or("Câmera"),
+            prefill
+                .as_ref()
+                .and_then(|p| p.name.as_deref())
+                .unwrap_or("Câmera"),
             "Câmera",
         ),
-        host: entry(prefill.as_ref().map_or("", |p| p.host.as_str()), "192.168.1.10"),
+        host: entry(
+            prefill.as_ref().map_or("", |p| p.host.as_str()),
+            "192.168.1.10",
+        ),
         port: entry(
-            &prefill.as_ref().map_or(DEFAULT_RTSP_PORT, |p| p.port).to_string(),
+            &prefill
+                .as_ref()
+                .map_or(DEFAULT_RTSP_PORT, |p| p.port)
+                .to_string(),
             "554",
         ),
         user: entry("admin", "usuário"),
@@ -949,8 +963,12 @@ pub(super) fn show_scan(dash: &Rc<Dashboard>) {
                 .spawn(discovery::scan(prefix, DEFAULT_RTSP_PORT, tx));
 
             let (scanning, closed) = (Rc::clone(&scanning), Rc::clone(&closed));
-            let (start, progress, status, list) =
-                (start.clone(), progress.clone(), status.clone(), list.clone());
+            let (start, progress, status, list) = (
+                start.clone(),
+                progress.clone(),
+                status.clone(),
+                list.clone(),
+            );
             let dash = Rc::downgrade(&dash);
             glib::spawn_future_local(async move {
                 let mut found: BTreeMap<Ipv4Addr, Found> = BTreeMap::new();
@@ -1005,8 +1023,12 @@ fn scan_summary(count: usize, prefix: [u8; 3]) -> String {
             "Nada encontrado em {net}. Confira a sub-rede e se as câmeras/NVR estão ligados \
              nessa mesma rede. Você ainda pode adicionar manualmente."
         ),
-        1 => "1 dispositivo encontrado. Clique em “Adicionar” e informe usuário e senha.".to_string(),
-        n => format!("{n} dispositivos encontrados. Clique em “Adicionar” e informe usuário e senha."),
+        1 => {
+            "1 dispositivo encontrado. Clique em “Adicionar” e informe usuário e senha.".to_string()
+        }
+        n => format!(
+            "{n} dispositivos encontrados. Clique em “Adicionar” e informe usuário e senha."
+        ),
     }
 }
 

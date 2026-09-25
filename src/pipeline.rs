@@ -175,6 +175,8 @@ pub struct PipelineOptions {
     /// Segurar a saída até o primeiro keyframe, em vez de mostrar os quadros
     /// incompletos que antecedem ele.
     pub wait_for_keyframe: bool,
+    /// Converter para RGB antes do sink (ver `app.convert_video`).
+    pub convert_video: bool,
 }
 
 impl PipelineOptions {
@@ -187,6 +189,7 @@ impl PipelineOptions {
                 .enabled
                 .then(|| Arc::new(MotionDetector::new(&config.motion))),
             wait_for_keyframe: config.app.wait_for_keyframe,
+            convert_video: config.app.convert_video,
         }
     }
 }
@@ -291,8 +294,24 @@ pub fn build(camera: &Camera, opts: &PipelineOptions) -> Result<Built> {
 
     gst::Element::link_many([&tee_rtp, &queue_decode, &decode])
         .context("falha ao ligar o tee RTP ao decodebin")?;
-    gst::Element::link_many([&tee_raw, &queue_sink, &sink])
-        .context("falha ao ligar o tee de vídeo ao sink")?;
+    if opts.convert_video {
+        let convert = make("videoconvert", "display-convert")?;
+        // Só o `videoconvert` deixaria o sink aceitar YUV como está; o filtro
+        // força RGB, que é o formato que qualquer renderizador sabe desenhar.
+        let rgb = make("capsfilter", "display-rgb")?;
+        rgb.set_property(
+            "caps",
+            gst::Caps::builder("video/x-raw")
+                .field("format", "BGRA")
+                .build(),
+        );
+        pipeline.add_many([&convert, &rgb])?;
+        gst::Element::link_many([&tee_raw, &queue_sink, &convert, &rgb, &sink])
+            .context("falha ao ligar o tee de vídeo ao sink (com videoconvert)")?;
+    } else {
+        gst::Element::link_many([&tee_raw, &queue_sink, &sink])
+            .context("falha ao ligar o tee de vídeo ao sink")?;
+    }
 
     let stats = Arc::new(StreamStats::default());
     attach_sink_probes(&sink, &stats)?;
@@ -305,7 +324,13 @@ pub fn build(camera: &Camera, opts: &PipelineOptions) -> Result<Built> {
 
     tune_autoplugged_elements(&decode, camera.label(), opts.wait_for_keyframe);
     let audio = Arc::new(AudioState::default());
-    link_rtspsrc_to_tee(&src, &tee_rtp, &pipeline, Arc::clone(&audio), camera.label());
+    link_rtspsrc_to_tee(
+        &src,
+        &tee_rtp,
+        &pipeline,
+        Arc::clone(&audio),
+        camera.label(),
+    );
     link_decodebin_to_tee(&decode, &tee_raw, camera.label());
 
     Ok(Built {

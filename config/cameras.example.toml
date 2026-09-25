@@ -49,6 +49,12 @@ stall_timeout_secs = 12
 # framerate. O vídeo passa a aparecer em 1–2 s em vez de dezenas de segundos.
 wait_for_keyframe = true
 
+# Converte o vídeo para RGB antes de exibir. Desligado (padrão), o frame
+# decodificado vai direto ao sink, sem copiar para a CPU. Ligue se a imagem
+# aparecer com cores erradas (roxo/verde) — típico de sessões sem aceleração
+# gráfica (remotas, Broadway). Custa uma conversão por quadro na CPU.
+convert_video = false
+
 # Quanto tolerar "dados chegando, nenhum quadro decodificável" antes de
 # reiniciar. Precisa ser MAIOR que o intervalo de I-frame do NVR, senão a
 # pipeline reinicia antes de alcançar o keyframe — e nunca exibe nada.

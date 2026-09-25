@@ -9,8 +9,8 @@
 //! O ramo vive num `gst::Bin` próprio (`audio-bin`) para que o supervisor
 //! consiga reconhecer erros dele e não reiniciar o vídeo por causa do som.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 use gst::prelude::*;
@@ -74,12 +74,9 @@ impl AudioState {
 
     /// O erro veio do ramo de áudio? Então não é motivo para reiniciar o vídeo.
     pub fn owns(&self, source: &gst::Object) -> bool {
-        self.inner
-            .lock()
-            .unwrap()
-            .bin
-            .as_ref()
-            .is_some_and(|bin| source == bin.upcast_ref::<gst::Object>() || source.has_as_ancestor(bin))
+        self.inner.lock().unwrap().bin.as_ref().is_some_and(|bin| {
+            source == bin.upcast_ref::<gst::Object>() || source.has_as_ancestor(bin)
+        })
     }
 
     /// O ramo de áudio falhou: desmonta e deixa de tentar.

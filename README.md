@@ -2,15 +2,41 @@
 
 Dashboard nativo para Linux (Rust + GTK4 + GStreamer) que mostra ao vivo, num
 grid, as câmeras de um NVR iCSee/XMEye (firmware Hi3520) ou câmeras IP via
-RTSP — cadastradas pela própria janela, manualmente ou escaneando a rede — com
-reconexão automática, captura de tela, gravação sob demanda, detecção de
-movimento e ícone na bandeja.
+RTSP. As câmeras são cadastradas pela própria janela — manualmente ou
+**escaneando a rede** — e o app cuida de reconexão automática, captura de tela,
+gravação sob demanda, áudio, detecção de movimento e ícone na bandeja.
 
-![grid 2×2 com três câmeras](docs/screenshot.png)
+![Grid com três câmeras ao vivo](docs/screenshot.png)
 
-_Captura do teste com credenciais inválidas: mostra os estados de conexão
-(vermelho = reconectando com backoff), o layout 2×2 e os botões de captura e
-gravação em cada tile._
+_Imagens deste README usam vídeo sintético (padrões de teste do GStreamer
+servidos por [`tools/fake_rtsp.py`](tools/fake_rtsp.py)), não câmeras reais._
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/layout.png" alt="Layout personalizado: um card esticado e os outros realocados"><br><sub><b>Layout livre:</b> cada card tem tamanho próprio; o invadido vai para o espaço livre.</sub></td>
+    <td width="50%"><img src="docs/manager.png" alt="Janela Gerenciar câmeras"><br><sub><b>Gerenciar câmeras:</b> dados ao vivo, editar, remover, adicionar, escanear.</sub></td>
+  </tr>
+</table>
+
+---
+
+## Início rápido
+
+```sh
+sudo pacman -S --needed rustup gtk4 gstreamer gst-plugins-base gst-plugins-good \
+                        gst-plugins-bad gst-plugins-ugly gst-libav gst-plugin-gtk4
+rustup default stable
+cargo run --release
+```
+
+1. O app abre **sem câmeras**, com o botão **Escanear a rede** (e **Adicionar
+   manualmente**).
+2. No dispositivo encontrado, clique em **Adicionar…**, informe usuário e senha e
+   use **Detectar canais** — só os canais com imagem ficam marcados.
+3. Pronto: cada canal vira um card. Arraste as bordas para redimensionar, o card
+   para reorganizar, e clique num card para abrir em tela cheia.
+
+Tudo isso é salvo entre execuções. Detalhes nas seções abaixo.
 
 ---
 
@@ -36,20 +62,26 @@ gravação em cada tile._
 - Abre **vazio** na primeira execução, com botões para escanear a rede ou adicionar manualmente
 - Escaneia a sub-rede (porta RTSP 554 + ONVIF/WS-Discovery) e lista o que encontrar
 - "Detectar canais" testa os canais 1–8 do dispositivo e marca só os que têm imagem
-- Botão **Gerenciar câmeras** (barra de título): lista com dados ao vivo, editar, adicionar e remover, sem reiniciar o app
+- **Gerenciar câmeras** (barra de título): lista com dados ao vivo, editar, adicionar e remover, sem reiniciar o app
 
 **Visualização**
 
-- Grid adaptável: 1 câmera → 1×1, 2–4 → 2×2, 5–9 → 3×3 (ou colunas fixas por configuração)
+- Grid em células: cada card tem **tamanho próprio** (arraste a borda ou o canto), reordena arrastando o card, e quem é invadido é realocado para o espaço livre; layout salvo entre execuções
 - Uma pipeline GStreamer independente por câmera — uma câmera offline não afeta as outras
 - Clique (ou tecla `1`–`9`) abre a câmera em tela cheia; `Esc` volta ao grid
-- Status por tile: conectando / ao vivo / reconectando / falha, com resolução, fps e bitrate de rede
+- Status por card: conectando / ao vivo / reconectando / falha, com resolução, fps e bitrate de rede
+- Seletor de **qualidade** por câmera (principal / substream) e `adaptive_stream` para poupar CPU e banda
+
+**Áudio**
+
+- Botão de alto-falante em cada card: ouve o som que o NVR já envia pelo RTSP (uma câmera por vez; só consome quando ligado)
 
 **Confiabilidade**
 
 - Reconexão automática com backoff exponencial (2 s, 4 s, 8 s… até o teto), que zera quando o vídeo volta
 - Watchdog de quadros: reinicia a pipeline se a câmera "congelar" sem emitir erro
 - Health-check TCP do NVR, que distingue "câmera com problema" de "NVR fora do ar"
+- Um erro de áudio ou de gravação nunca derruba o vídeo ao vivo
 - Log estruturado de todos os eventos de pipeline
 
 **Captura e gravação**
@@ -63,9 +95,10 @@ gravação em cada tile._
 - Detecção de movimento por diferença de quadros, com sensibilidade e cooldown configuráveis
 - Notificações do desktop quando uma câmera cai e quando volta
 - Ícone na bandeja (StatusNotifierItem) com resumo e menu
-- Cards com tamanho independente (arrastando borda/canto), reordenáveis (arrastando o card) e realocados automaticamente quando invadidos; layout salvo entre execuções
-- Substream no grid e stream principal em tela cheia (`adaptive_stream`), para poupar CPU e banda
 - Vários NVRs / câmeras IP no mesmo dashboard
+
+**Ainda não suportado:** PTZ (mover/zoom) e interfone (falar pela câmera). Veja
+[Problemas conhecidos](#ptz-e-interfone-não-suportados).
 
 ---
 
@@ -85,8 +118,10 @@ rustup default stable
 | `gstreamer` + `plugins-base/good` | RTSP, decodificação, gravação | sim |
 | `gst-plugin-gtk4` | elemento `gtk4paintablesink` | sim |
 | `gst-libav` | decoders de software (`avdec_h264`, `avdec_h265`) | sim |
+| `gst-plugin-pipewire` ou `gst-plugins-good` (Pulse) | saída de som (`autoaudiosink`) | só para o áudio |
 | `gst-plugin-va` / `nvcodec` | decodificação por hardware (opcional, ver [Problemas conhecidos](#problemas-conhecidos)) | não |
 | Extensão GNOME AppIndicator | ícone na bandeja | não |
+| `python3` | só o servidor RTSP de teste em `tools/` | não |
 
 Verifique o ambiente sem compilar nada:
 
@@ -110,7 +145,7 @@ cargo build --release
 ```sh
 make                 # compila em release
 sudo make install    # PREFIX=/usr/local por padrão
-make user-config     # cria ~/.config/nvr-dashboard/cameras.toml (modo 600)
+make user-config     # cria ~/.config/nvr-dashboard/cameras.toml (ajustes, modo 600)
 ```
 
 Depois disso o app aparece no menu do GNOME. Para remover: `sudo make uninstall`.
@@ -119,12 +154,15 @@ Depois disso o app aparece no menu do GNOME. Para remover: `sudo make uninstall`
 
 ## Configuração
 
-Há dois arquivos, com papéis diferentes:
+Há arquivos com papéis diferentes, todos em `~/.config/nvr-dashboard/`
+(respeita `$XDG_CONFIG_HOME`):
 
 | Arquivo | O que guarda | Quem edita |
 |---|---|---|
-| `~/.config/nvr-dashboard/devices.toml` | **Câmeras** e credenciais | O app (janela de cadastro) |
-| `cameras.toml` | **Ajustes** do app (`[app]`, `[recording]`, `[motion]`…) | Você, opcional |
+| `devices.toml` | **Câmeras** e credenciais (modo `600`) | O app (janelas de cadastro) |
+| `layout.toml` | Posição e tamanho de cada card | O app (ao arrastar) |
+| `quality.toml` | Qualidade escolhida por câmera | O app (seletor do card) |
+| `cameras.toml` | **Ajustes** (`[app]`, `[recording]`, `[motion]`…) | Você, opcional |
 
 ### Cadastrar câmeras (pela janela)
 
@@ -135,11 +173,11 @@ Na primeira execução o app abre sem câmeras. Use:
   encontrado, informe usuário e senha e use **Detectar canais**.
 - **Adicionar manualmente** — endereço, porta, usuário, senha e canais (`1-3`,
   `1,2,5`…). Em **Avançado** dá para trocar o modelo da URL RTSP.
-- **Gerenciar câmeras** (botão azul no canto esquerdo da barra de título) — abre a lista de
-  câmeras cadastradas. Cada linha mostra o **nome**, o endereço (`host:porta`),
-  o **canal**, o **usuário**, o estado ao vivo (ao vivo / conectando /
-  reconectando…), resolução, fps e Mb/s, e a qualidade escolhida. Os dados
-  atualizam a cada segundo. Dali você pode:
+- **Gerenciar câmeras** (botão azul no canto esquerdo da barra de título) — abre a
+  lista de câmeras cadastradas. Cada linha mostra o **nome**, o endereço
+  (`host:porta`), o **canal**, o **usuário**, o estado ao vivo (ao vivo /
+  conectando / reconectando…), resolução, fps e Mb/s, e a qualidade escolhida. Os
+  dados atualizam a cada segundo. Dali você pode:
   - **Editar** — renomear a câmera e trocar endereço, porta, usuário, senha e o
     modelo da URL. Endereço, porta, usuário e senha valem para o **dispositivo
     inteiro** (todos os canais dele): as câmeras são recriadas mantendo posição,
@@ -147,6 +185,12 @@ Na primeira execução o app abre sem câmeras. Use:
     interrompe o vídeo.
   - **Remover** — com confirmação; some do grid e do cadastro.
   - **Adicionar manualmente** / **Escanear a rede** — as duas opções acima.
+
+As janelas de gerenciamento (lista, cadastro, edição e varredura) fecham com o
+**X** ou com **Esc**; abrir uma de novo cria uma janela nova, já com os dados
+atuais.
+
+![Estado inicial, sem câmeras](docs/empty.png)
 
 **Detectar canais:** muitos NVRs aceitam a sessão RTSP até para canais que não
 existem, então "conectou" não prova nada. O teste só considera um canal vivo se
@@ -157,10 +201,9 @@ aparecer como "sem imagem", rode a detecção de novo.
 Cada canal vira um card. Se o `host:porta` já existe, o app só acrescenta os
 canais que faltam (e atualiza o login).
 
-`devices.toml` é gravado com permissão `600` porque guarda as senhas em texto
-(o mesmo cuidado que o `cameras.toml` sempre teve). Para outro caminho, use
-`$NVR_DASHBOARD_DEVICES`. Se o arquivo ficar ilegível, ele é movido para
-`devices.toml.bak` e o app abre vazio, em vez de sobrescrevê-lo.
+`devices.toml` é gravado com permissão `600` porque guarda as senhas em texto.
+Para outro caminho, use `$NVR_DASHBOARD_DEVICES`. Se o arquivo ficar ilegível,
+ele é movido para `devices.toml.bak` e o app abre vazio, em vez de sobrescrevê-lo.
 
 ### Ajustes (`cameras.toml`, opcional)
 
@@ -200,7 +243,8 @@ rtsp://{user_enc}:{password_enc}@{host}:{port}/user={user}&password={password}&c
 |---|---|---|
 | `latency_ms` | `200` | Buffer de jitter do `rtspsrc` |
 | `rtsp_protocols` | `"tcp"` | `tcp`, `udp` ou `tcp+udp` |
-| `hardware_decoding` | `false` | Ver [Problemas conhecidos](#problemas-conhecidos) |
+| `hardware_decoding` | `true` | Decoders VA-API/NVDEC quando existirem; `false` força software. Ver [Problemas conhecidos](#problemas-conhecidos) |
+| `convert_video` | `false` | Converte para RGB antes de exibir. Ligue se as **cores** saírem erradas (roxo/verde) em sessões sem aceleração gráfica (remotas, Broadway) |
 | `grid_columns` | automático | Colunas fixas do grid |
 | `stall_timeout_secs` | `12` | Sem dados do NVR por este tempo → reinicia |
 | `wait_for_keyframe` | `true` | Segura a exibição até o primeiro keyframe |
@@ -239,23 +283,25 @@ cargo run --release -- --help
 ```
 
 `--check` confirma que o TOML é válido, testa o TCP de cada dispositivo
-cadastrado, lista as câmeras com a URL mascarada e mostra os diretórios de saída. É o primeiro
-comando a rodar quando algo não funciona.
+cadastrado, lista as câmeras com a URL mascarada e mostra os diretórios de saída.
+É o primeiro comando a rodar quando algo não funciona.
 
 ### Atalhos
 
 | Tecla | Ação |
 |---|---|
 | Clique / `Enter` | Abre a câmera em foco em tela cheia |
-| `1` … `9` | Abre a câmera daquela posição |
-| `Esc` | Volta ao grid |
+| `1` … `9` | Abre a câmera daquela posição (esquerda→direita, cima→baixo) |
+| `Esc` | Volta ao grid (ou fecha a janela de gerenciamento) |
 | `Ctrl+S` | Captura PNG da câmera em foco |
 | `Ctrl+R` | Inicia/para a gravação da câmera em foco |
 | `Ctrl+M` | Liga/desliga o áudio da câmera em foco |
 | `F11` | Alterna tela cheia da janela |
 | `Ctrl+Q` / `Ctrl+W` | Sai |
 
-Cada tile também tem botões de captura e gravação na faixa superior.
+Cada card também tem, na faixa superior, o seletor de qualidade e os botões de
+captura, áudio (alto-falante) e gravação (câmera de vídeo — fica vermelha e vira
+"parar" enquanto grava).
 
 ### Redimensionar e reorganizar os cards
 
@@ -276,16 +322,11 @@ tamanho **próprio**: mexer num card nunca altera o tamanho dos outros.
   linha a linha); células que sobram ficam vazias.
 
 Posição e tamanho de cada card são salvos ~0,5 s depois da mudança em
-`$XDG_CONFIG_HOME/nvr-dashboard/layout.toml` (padrão
-`~/.config/nvr-dashboard/layout.toml`), por câmera (`<dispositivo>/<canal>`).
-Câmeras novas entram na primeira célula livre. Se o **número de colunas** mudar
-(ex.: ao passar de 4 para 5 câmeras o grid vai de 2 para 3 colunas), o layout
-salvo é descartado e todos voltam ao mesmo tamanho. Para voltar ao padrão a
-qualquer momento, apague o arquivo.
-
-As janelas de gerenciamento (lista, cadastro, edição e varredura) fecham com o
-**X** ou com **Esc**; abrir uma de novo cria uma janela nova, já com os dados
-atuais.
+`layout.toml`, por câmera (`<dispositivo>/<canal>`). Câmeras novas entram na
+primeira célula livre. Se o **número de colunas** mudar (ex.: ao passar de 4 para
+5 câmeras o grid vai de 2 para 3 colunas), o layout salvo é descartado e todos
+voltam ao mesmo tamanho. Para voltar ao padrão a qualquer momento, apague o
+arquivo.
 
 ### Áudio (ouvir a câmera)
 
@@ -301,20 +342,15 @@ iCSee/XMEye, G.711 A-law); o ícone fica verde. Clique de novo para silenciar.
   o vídeo.
 - Câmera sem microfone: o botão fica ligado aguardando, sem efeito.
 
-**Falar pela câmera (interfone) não é suportado.** O RTSP deste NVR não oferece
-canal de retorno (o pedido de *backchannel* ONVIF volta sem faixa de envio); nos
-iCSee/XMEye o envio de voz usa o protocolo proprietário DVRIP (porta 34567), que
-o app não implementa.
-
 ### Qualidade da imagem
 
 Cada card tem um seletor **Alta / Baixa** na faixa superior (só aparece se o NVR
 expõe um substream, ou seja, `substream_index` ≠ `stream` da câmera). *Alta* usa
 o stream principal; *Baixa* usa o substream (`app.substream_index`), com menos
 CPU e banda. A troca reconecta só aquela câmera. A escolha vale para o grid e é
-salva em `~/.config/nvr-dashboard/quality.toml`, sobrepondo `adaptive_stream`
-no grid. Em tela cheia, com `adaptive_stream = true` a câmera sempre sobe para
-o stream principal e, ao voltar, retorna à qualidade escolhida.
+salva em `quality.toml`, sobrepondo `adaptive_stream` no grid. Em tela cheia,
+com `adaptive_stream = true` a câmera sempre sobe para o stream principal e, ao
+voltar, retorna à qualidade escolhida.
 
 ### Indicadores
 
@@ -334,20 +370,27 @@ o stream principal e, ao voltar, retorna à qualidade escolhida.
 ```
 src/
 ├── main.rs         CLI, tracing, runtime do tokio, modo --check
-├── config.rs       structs + parsing TOML, Secret (senha nunca vaza em Debug)
-├── camera.rs       UrlTemplate, Camera, Redactor de logs
+├── config.rs       ajustes (TOML) + Secret (senha nunca vaza em Debug)
+├── store.rs        cadastro de dispositivos/canais (devices.toml, modo 600)
+├── camera.rs       UrlTemplate, Camera, Quality, Redactor de logs
+├── discovery.rs    varredura de rede (TCP 554 + ONVIF) e teste de canais
 ├── pipeline.rs     construção da pipeline GStreamer + StreamStats
+├── audio.rs        ramo de áudio sob demanda (ouvir a câmera)
 ├── recording.rs    ramo dinâmico de gravação (tee → parsebin → splitmuxsink)
 ├── motion.rs       detecção de movimento por diferença de quadros
 ├── reconnect.rs    Supervisor por câmera: bus, watchdog, backoff, comandos
 ├── notify.rs       notificações do desktop e ícone na bandeja (ksni)
 └── ui/
-    ├── mod.rs         janela, ligação pipelines ↔ widgets, canais
+    ├── mod.rs         janela, Dashboard (câmeras dinâmicas), canais
+    ├── grid.rs        grade em células: encaixe, realocação, arrastar/soltar
     ├── camera_tile.rs widget de uma câmera no grid
     ├── fullscreen.rs  view de câmera única
-    ├── grid.rs        layout adaptável
+    ├── manage.rs      janelas: lista, cadastro, edição e varredura
+    ├── quality.rs     qualidade escolhida por câmera (quality.toml)
     ├── snapshot.rs    captura PNG via renderer do GTK
     └── style.css      tema escuro
+tools/
+└── fake_rtsp.py    servidor RTSP de teste (padrões do GStreamer)
 ```
 
 ### Pipeline por câmera
@@ -355,12 +398,13 @@ src/
 ```
                        ┌─ queue ─▶ decodebin ─▶ tee_raw ─┬─ queue ─▶ gtk4paintablesink
  rtspsrc ─▶ tee_rtp ───┤                                 └─ queue ─▶ videoconvert ─▶ GRAY8 80×45 ─▶ fakesink   (movimento)
-                       └─ queue ─▶ parsebin ─▶ splitmuxsink              (gravação, ramo dinâmico)
+     │                 └─ queue ─▶ parsebin ─▶ splitmuxsink              (gravação, ramo dinâmico)
+     └─ (pad de áudio) ─▶ queue ─▶ decodebin ─▶ audioconvert ─▶ autoaudiosink   (só ao ouvir, ramo dinâmico)
 ```
 
 Não há `videoconvert` no caminho de exibição: o sink aceita NV12/DMABuf direto,
 então o frame decodificado por hardware não é copiado para a CPU. A conversão
-existe só no ramo de movimento.
+existe só no ramo de movimento (e no de exibição se `convert_video = true`).
 
 `tee_rtp` deriva o stream **codificado**: gravar dali evita recodificar e
 mantém uma única conexão RTSP com o NVR. O ramo de gravação é adicionado e
@@ -368,14 +412,18 @@ removido em runtime; a remoção segue a sequência canônica do GStreamer
 (probe `IDLE` → desconecta → injeta `EOS` → remove o bin quando o `EOS` volta
 pelo bus), de modo que o arquivo sempre é finalizado.
 
+A fila antes do decoder **não descarta** pacotes: perder um único pacote RTP de um
+keyframe corrompe o quadro e congela a imagem até o próximo IDR.
+
 ### Threads e canais
 
 ```
  thread GTK                              runtime tokio (2 workers)
  ┌────────────────────┐  CameraEvent   ┌──────────────────────────────┐
  │ tiles · fullscreen │ ◀────────────── │ Supervisor × N câmeras       │
- │ paintables · PNG   │ ───────────────▶│  bus · watchdog · backoff    │
- │ notificações       │    Command      │  health-check · gravação     │
+ │ grid · janelas     │ ───────────────▶│  bus · watchdog · backoff    │
+ │ paintables · PNG   │    Command      │  health-check · gravação     │
+ │ notificações       │                 │ varredura · teste de canais  │
  └─────────┬──────────┘                 └──────────────────────────────┘
            │ Arc<StreamStats> (atômicos: fps, bitrate, resolução, movimento)
            │
@@ -384,14 +432,28 @@ pelo bus), de modo que o arquivo sempre é finalizado.
 
 - A thread do GTK constrói as pipelines (o `GdkPaintable` do sink precisa nascer
   nela), monta o grid e aplica mudanças de estado. Nada de rede ou de I/O toca o
-  main loop.
+  main loop: varredura e teste de canais rodam no tokio e voltam por canais.
 - Um `Supervisor` por câmera roda no tokio, consome o bus do GStreamer como
-  stream assíncrono e mantém um watchdog de 1 s.
+  stream assíncrono e mantém um watchdog de 1 s. **Largar o canal de comandos
+  encerra o supervisor**: é assim que uma câmera removida sai (finalizando antes
+  uma eventual gravação).
 - Widgets falam com a janela por um canal de `UiAction`, o que evita ciclos `Rc`
-  entre o tile e o `Dashboard`.
+  entre o card e o `Dashboard`.
+- Câmeras entram e saem em tempo de execução: o `Dashboard` guarda um `Slot` por
+  id de câmera, e ids nunca são reaproveitados — um evento atrasado de uma câmera
+  removida não cai noutra.
 
 ### Decisões que valem explicar
 
+- **A geometria do grid é pura.** Encaixe e realocação (`solve`, `relocate`) são
+  funções sem GTK, testadas exaustivamente (nenhuma combinação sobrepõe cards).
+  Todo passo de um arrasto recalcula a partir do layout do **início** do arrasto,
+  por isso encolher de volta devolve os cards deslocados. O gesto de resize fica
+  na grade, não em cada alça: um card que cresce desloca o widget sob o ponteiro
+  e as coordenadas relativas a ele deixariam de refletir o mouse.
+- **Janelas de gerenciamento não guardam referências fortes a si mesmas.** Botões
+  dentro da janela usam `WeakRef`; do contrário formariam um ciclo, a janela
+  fechada nunca seria liberada e o botão a "reabriria" já destruída.
 - **A tela cheia não reparenta widgets.** Um `GdkPaintable` pode ser desenhado
   por vários widgets ao mesmo tempo, então a view de câmera única aponta um
   `gtk::Picture` maior para o mesmo paintable. Sem risco de derrubar a pipeline
@@ -404,8 +466,9 @@ pelo bus), de modo que o arquivo sempre é finalizado.
   "conectada" antes da hora, com a resolução errada.
 - **Gravação sobrevive a quedas.** Se o stream cair no meio de uma gravação, ela
   recomeça sozinha (em arquivo novo) quando o vídeo voltar.
-- **Erro na gravação não derruba a visualização.** Um erro vindo de dentro do
-  ramo de gravação (disco cheio, por exemplo) desliga só a gravação.
+- **Erro na gravação ou no áudio não derruba a visualização.** Um erro vindo de
+  dentro desses ramos desliga só o ramo. O de áudio vive num `gst::Bin` próprio
+  para o supervisor reconhecer a origem do erro.
 - **O watchdog tem dois relógios.** Um conta bytes vindos do NVR, outro conta
   quadros decodificados. Sem essa separação, o `wait_for_keyframe` faria a
   pipeline parecer travada durante a espera pelo keyframe e o watchdog a
@@ -417,19 +480,24 @@ pelo bus), de modo que o arquivo sempre é finalizado.
   afins à thread do GTK — pará-lo com o main loop já encerrado faz o glib
   abortar o processo. As pipelines também ficam referenciadas até o
   `process::exit`, que não roda destrutores, para que esse `Drop` nunca caia
-  numa thread do tokio.
+  numa thread do tokio (o que vale também para câmeras removidas em execução).
 
 ---
 
 ## Segurança
 
-- A senha vive só em `config/cameras.toml` (modo 600, fora do git).
+- As senhas vivem em `devices.toml` (modo `600`, gravação atômica, fora do git) e,
+  se você ainda usa, nos blocos legados do `cameras.toml`.
 - `Secret` imprime `***` em `Debug`/`Display`; o valor em claro só sai por
   `expose()`, o que torna trivial auditar: `grep -rn 'expose()' src/`.
 - `Redactor` limpa as senhas — literal e percent-encoded — de toda mensagem
   vinda do GStreamer antes de ir para o log ou para a UI, porque erros do
-  `rtspsrc` ecoam a `location` completa.
+  `rtspsrc` ecoam a `location` completa. Dispositivos cadastrados depois também
+  entram na lista.
 - As URLs mostradas em `--check`, nos logs e nos tooltips já vêm mascaradas.
+- A varredura de rede só abre conexões TCP na porta RTSP e envia um probe
+  multicast ONVIF, dentro da sub-rede informada. Nenhuma credencial é enviada
+  durante a varredura: o login só é usado depois, ao adicionar o dispositivo.
 
 ---
 
@@ -448,7 +516,7 @@ que têm, enquanto os de software costumam segurar a saída. Um H.265 sintético
 mesma resolução decodifica perfeitamente por VA-API.
 
 O dashboard trata o sintoma com `wait_for_keyframe = true` (padrão): o
-depayloader segura a saída até um quadro completo e o tile mostra **"Aguardando
+depayloader segura a saída até um quadro completo e o card mostra **"Aguardando
 keyframe…"** com a explicação, em vez de verde.
 
 **A cura de verdade é no NVR.** No app/web do iCSee/XMEye, em *Encode Config*,
@@ -463,6 +531,35 @@ Se preferir ver a imagem se formando aos poucos em vez de esperar, ponha
 > menor, o watchdog reinicia a pipeline antes de ela alcançar o keyframe e o
 > vídeo nunca aparece.
 
+### Cores erradas (roxo/verde) o tempo todo
+
+Diferente do caso acima: a imagem inteira com cores trocadas, mesmo com o vídeo
+fluindo. Acontece em sessões **sem aceleração gráfica** (acesso remoto, Broadway):
+o sink não sabe desenhar o formato YUV do decodificador. Ponha
+`convert_video = true` em `[app]` para converter para RGB antes de exibir
+(custa uma conversão por quadro na CPU). Em desktop normal (Wayland/X11 com GPU)
+não é necessário.
+
+### Canal "sem imagem" que existe
+
+Muitos NVRs aceitam a sessão RTSP até para canais inexistentes, então o teste de
+canais só valida quando chega **vídeo**. Se um canal esperado aparecer como "sem
+imagem", pode ser câmera offline ou uma falha momentânea do NVR (sessões
+travadas por conexões anteriores abandonadas) — rode **Detectar canais** de novo
+antes de concluir que a câmera está fora.
+
+### PTZ e interfone não suportados
+
+- **PTZ:** o NVR de referência (NBD90S08N-UW6) não tem RS-485 e não expõe ONVIF;
+  o PTZ das câmeras IP passaria pelo protocolo proprietário DVRIP (porta 34567).
+  Em teste com as câmeras de referência, o NVR aceitou os comandos de movimento
+  mas nenhuma câmera se moveu — provavelmente modelos fixos. Sem confirmação de
+  que o movimento funciona, o app não oferece controles de PTZ.
+- **Falar pela câmera (interfone):** o RTSP não oferece canal de retorno (o pedido
+  de *backchannel* ONVIF volta sem faixa de envio). O envio de voz usa o mesmo
+  protocolo DVRIP, que o app não implementa. O NVR informa suportar fala para as
+  câmeras, então é uma evolução possível.
+
 ### Ícone na bandeja no GNOME
 
 O GNOME não implementa `StatusNotifierItem` nativamente. Sem a extensão
@@ -473,15 +570,15 @@ funciona igual. As notificações do desktop não dependem da extensão.
 ### Substream
 
 Nem todo firmware expõe `stream=1`. No NVR de referência ele existe (640×360
-para canais 1 e 2, 640×720 para o canal 3). Confirme com `--check` e um teste
-com `stream = 1` numa câmera antes de ligar `adaptive_stream`.
+para canais 1 e 2, 640×720 para o canal 3). Use o seletor de qualidade de uma
+câmera para testar antes de ligar `adaptive_stream`.
 
 ---
 
 ## Diagnóstico
 
 ```sh
-cargo run --release -- --check                  # config + alcance dos NVRs
+cargo run --release -- --check                  # config + alcance dos dispositivos
 RUST_LOG=nvr_dashboard=debug cargo run --release # log detalhado da aplicação
 GST_DEBUG=rtspsrc:5 cargo run --release          # log do GStreamer
 ```
@@ -498,13 +595,16 @@ gst-launch-1.0 rtspsrc location="rtsp://…" latency=200 ! decodebin ! autovideo
 
 | Sintoma | Onde olhar |
 |---|---|
-| `Unauthorized (401)` | usuário/senha em `config/cameras.toml` |
+| `Unauthorized (401)` | usuário/senha do dispositivo: **Gerenciar câmeras → Editar** |
 | `SEM RESPOSTA` no `--check` | IP, porta e rede; o NVR está ligado? |
+| Abre sem nenhuma câmera | normal na primeira execução (ou após migrar): use **Escanear a rede** |
 | Imagem esverdeada no início | normal com GOP longo; ver acima. Reduza o I-frame no NVR |
+| Cores erradas o tempo todo | sessão sem GPU: `convert_video = true` |
 | Fica em "Aguardando keyframe…" para sempre | aumente `keyframe_timeout_secs` acima do GOP do NVR |
 | `sem dados do NVR há Ns` | rede instável; tente `rtsp_protocols = "tcp"` e aumente `latency_ms` |
+| Sem som ao clicar no alto-falante | log "não consegui ligar o áudio": falta `gst-plugin-pipewire`/Pulse; ou a câmera não tem microfone |
 | Gravação não gera arquivo | permissão do diretório; rode com `RUST_LOG=…=debug` e procure "gravação ligada ao muxer" |
-| `a câmera ainda não entregou nenhum quadro` ao capturar | normal enquanto o tile mostra "Aguardando keyframe…"; espere o vídeo aparecer |
+| `a câmera ainda não entregou nenhum quadro` ao capturar | normal enquanto o card mostra "Aguardando keyframe…"; espere o vídeo aparecer |
 | Vídeo gravado com duração 0 s | versão antiga; o arquivo só é finalizado se o `EOS` completar — confira se o log traz "gravação finalizada" |
 
 ---
@@ -512,17 +612,58 @@ gst-launch-1.0 rtspsrc location="rtsp://…" latency=200 ! decodebin ! autovideo
 ## Desenvolvimento
 
 ```sh
-cargo test                                  # 40 testes unitários
+cargo test                                  # 65 testes unitários (+1 manual, ignorado)
 cargo clippy --all-targets -- -D warnings
 cargo fmt
 make lint                                   # atalho para o clippy acima
 ```
 
-Os testes cobrem parsing e defaults da configuração, mascaramento de senha,
-montagem e mascaramento de URL, resolução de múltiplos NVRs, backoff, layout do
-grid, contadores de estatística e a lógica de detecção de movimento. Eles não
+Os testes cobrem parsing e defaults da configuração, o cadastro de dispositivos
+(gravação `600`, merge de canais, edição, arquivo corrompido), montagem e
+mascaramento de URL, backoff, a geometria do grid (encaixe e realocação, sem
+sobreposição em nenhuma combinação), a varredura (contra um listener local),
+contadores de estatística, o ramo de áudio e a detecção de movimento. Não
 precisam de rede nem de um NVR.
 
-O que **não** é coberto por teste automatizado (validado à mão contra o NVR real):
-a construção das pipelines GStreamer, o ramo dinâmico de gravação, a troca de
-stream e a interface.
+Um teste manual (`#[ignore]`) exercita a detecção de canais num NVR de verdade:
+
+```sh
+NVR_TEST_HOST=192.168.1.10 NVR_TEST_USER=admin NVR_TEST_PASS=… \
+  cargo test --release detecta_canais -- --ignored --nocapture
+```
+
+### Sem câmera: servidor RTSP de teste
+
+[`tools/fake_rtsp.py`](tools/fake_rtsp.py) serve três câmeras sintéticas (H.264,
+1280×720, 15 fps) em `rtsp://127.0.0.1:8554/cam1…cam3`, só com a biblioteca
+padrão do Python e o `gst-launch-1.0`:
+
+```sh
+tools/fake_rtsp.py &
+# No app: Adicionar manualmente → 127.0.0.1, porta 8554, usuário/senha quaisquer,
+# canais 1-3, e em Avançado o modelo:  rtsp://{host}:{port}/cam{channel}
+# Em cameras.toml:  [app]  rtsp_protocols = "udp"   (o servidor só fala UDP)
+```
+
+É o que gera as imagens deste README.
+
+### Testar a interface sem tela
+
+O backend Broadway do GTK renderiza a janela num navegador, o que permite
+capturar imagens e clicar por script sem tocar na sua sessão:
+
+```sh
+gtk4-broadwayd :5 &
+GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 \
+  XDG_CONFIG_HOME=/tmp/cfg NVR_DASHBOARD_DEVICES=/tmp/cfg/devices.toml \
+  ./target/release/nvr-dashboard          # abre em http://127.0.0.1:8085
+```
+
+Use `XDG_CONFIG_HOME` e `NVR_DASHBOARD_DEVICES` apontando para um diretório
+temporário para não misturar com o seu cadastro e layout reais. Nesse backend
+ponha `convert_video = true` (cores) e lembre que **arrastar e soltar do GTK não
+funciona** nele (trocar posição de cards não é testável ali).
+
+O que **não** é coberto por teste automatizado (validado à mão): a construção das
+pipelines GStreamer contra um NVR real, o ramo dinâmico de gravação, a troca de
+stream e o arrastar-e-soltar da interface.

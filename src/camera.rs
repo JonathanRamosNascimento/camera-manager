@@ -308,7 +308,9 @@ mod tests {
             #[serde(default)]
             app: App,
         }
-        toml::from_str::<Wrapper>(raw).expect("TOML de teste válido").app
+        toml::from_str::<Wrapper>(raw)
+            .expect("TOML de teste válido")
+            .app
     }
 
     fn one(device: &Device, app: &App) -> Camera {
