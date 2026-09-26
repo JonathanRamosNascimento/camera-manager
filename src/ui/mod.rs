@@ -19,6 +19,7 @@
 //! ```
 
 pub mod camera_tile;
+pub mod detection_overlay;
 pub mod fullscreen;
 pub mod grid;
 pub mod manage;
@@ -39,6 +40,7 @@ use gtk::{gdk, gio, glib};
 
 use crate::camera::{self, Camera, Quality, Redactor, UrlTemplate};
 use crate::config::{Config, Secret};
+use crate::detection::{DetectionSettings, DetectionState};
 use crate::notify::{Notifier, TrayCommand, TraySummary};
 use crate::pipeline::{self, CameraPipeline, PipelineOptions, StreamStats};
 use crate::reconnect::{
@@ -72,6 +74,8 @@ pub enum UiAction {
     ToggleListen(usize),
     /// Qualidade da imagem no grid, escolhida no seletor do tile.
     SetQuality(usize, Quality),
+    /// Abrir a tela de identificação de objetos da câmera (botão de olho).
+    ConfigureDetection(usize),
     /// Abrir a lista de câmeras cadastradas.
     ShowCameras,
     /// Abrir o formulário de cadastro manual.
@@ -204,6 +208,13 @@ impl Slot {
         camera.name = self.name.borrow().clone();
         camera
     }
+
+    /// Estado da identificação de objetos; `None` se desligada nesta câmera.
+    fn detection(&self) -> Option<Arc<DetectionState>> {
+        self.audio
+            .as_ref()
+            .and_then(|handle| handle.detection.clone())
+    }
 }
 
 /// O que é preciso para criar pipelines e supervisores depois da janela aberta.
@@ -248,6 +259,7 @@ struct Dashboard {
     snapshot_dir: PathBuf,
     adaptive_stream: bool,
     notify_motion: bool,
+    notify_detection: bool,
     tray_updates: async_channel::Sender<TraySummary>,
     last_tray_summary: RefCell<TraySummary>,
 }
@@ -274,8 +286,11 @@ impl Dashboard {
         let Some(slot) = self.slot(id) else {
             return;
         };
-        self.fullscreen
-            .show(&slot.named_camera(), slot.paintable.as_ref());
+        self.fullscreen.show(
+            &slot.named_camera(),
+            slot.paintable.as_ref(),
+            slot.detection(),
+        );
         self.fullscreen.set_state(&slot.state.borrow());
         self.fullscreen.set_recording(slot.recording_active.get());
         self.sync_listening();
@@ -445,8 +460,11 @@ impl Dashboard {
             .rename_channel(&slot.camera.nvr_id, slot.camera.channel, name);
         self.save_store();
         if self.fullscreen.current() == Some(id) {
-            self.fullscreen
-                .show(&slot.named_camera(), slot.paintable.as_ref());
+            self.fullscreen.show(
+                &slot.named_camera(),
+                slot.paintable.as_ref(),
+                slot.detection(),
+            );
         }
         self.cameras_changed();
     }
@@ -512,6 +530,115 @@ impl Dashboard {
         self.grid.set_batch(false);
         self.cameras_changed();
         Ok(())
+    }
+
+    /// Ajustes de detecção gravados no cadastro para uma câmera.
+    fn stored_detection(&self, slot: &Slot) -> DetectionSettings {
+        self.store
+            .borrow()
+            .devices
+            .iter()
+            .find(|d| d.id == slot.camera.nvr_id)
+            .and_then(|d| d.channels.iter().find(|c| c.channel == slot.camera.channel))
+            .map(|entry| entry.detection.clone())
+            .unwrap_or_default()
+    }
+
+    /// Grava os ajustes de detecção da câmera no cadastro, sem tocar na pipeline.
+    /// Devolve `false` se a câmera não existe mais.
+    fn store_detection(&self, id: usize, settings: &DetectionSettings) -> bool {
+        let Some(slot) = self.slot(id) else {
+            return false;
+        };
+        self.store.borrow_mut().set_detection(
+            &slot.camera.nvr_id,
+            slot.camera.channel,
+            settings.clone(),
+        );
+        self.save_store();
+        true
+    }
+
+    /// Aplica novos ajustes de detecção a uma câmera.
+    ///
+    /// Mudar só as classes ou a confiança vale na hora, sem mexer no vídeo.
+    /// Ligar ou desligar precisa montar (ou desmontar) o ramo da pipeline, o que
+    /// recria a câmera: ela mantém posição, tamanho e qualidade no grid, mas a
+    /// conexão recomeça (e uma gravação em andamento é encerrada).
+    fn set_detection(&self, id: usize, settings: DetectionSettings) {
+        let Some(slot) = self.slot(id) else {
+            return;
+        };
+        let previous = self.stored_detection(&slot);
+        if previous == settings {
+            return;
+        }
+        self.store_detection(id, &settings);
+
+        // Desligada antes e depois: só o cadastro muda, a pipeline não tem
+        // nada a ver com isso.
+        if !previous.enabled && !settings.enabled {
+            return;
+        }
+        if previous.enabled
+            && settings.enabled
+            && let Some(state) = slot.detection()
+        {
+            state.update(&settings);
+            return;
+        }
+
+        let name = slot.name.borrow().clone();
+        if slot.recording_wanted.get() {
+            self.toast(&format!(
+                "Gravação de {name} encerrada para reiniciar a câmera"
+            ));
+        }
+        self.recreate_camera(id);
+        self.toast(&if settings.enabled {
+            format!("Identificação de objetos ligada em {name}")
+        } else {
+            format!("Identificação de objetos desligada em {name}")
+        });
+    }
+
+    /// Refaz a câmera a partir do cadastro (nome, detecção, etc. atuais).
+    fn recreate_camera(&self, id: usize) {
+        let Some(slot) = self.slot(id) else {
+            return;
+        };
+        let Some(device) = self
+            .store
+            .borrow()
+            .devices
+            .iter()
+            .find(|d| d.id == slot.camera.nvr_id)
+            .cloned()
+        else {
+            return;
+        };
+        let Some(entry) = device
+            .channels
+            .iter()
+            .find(|c| c.channel == slot.camera.channel)
+            .cloned()
+        else {
+            return;
+        };
+        let urls = Arc::new(UrlTemplate::new(&device));
+
+        self.grid.set_batch(true);
+        self.detach_camera(id);
+        let new_id = self.slots.borrow().len();
+        self.spawn_camera(camera::build_one(
+            new_id,
+            &device,
+            &urls,
+            &entry,
+            &self.config.app,
+        ));
+        self.grid.set_batch(false);
+        self.cameras_changed();
     }
 
     fn save_store(&self) {
@@ -583,6 +710,7 @@ impl Dashboard {
                     &camera,
                     Some(&built.paintable),
                     Arc::clone(&built.handle.stats),
+                    built.handle.detection.clone(),
                     &self.spawner.actions,
                 );
                 self.pipelines
@@ -626,6 +754,7 @@ impl Dashboard {
                     &camera,
                     None,
                     Arc::new(StreamStats::default()),
+                    None,
                     &self.spawner.actions,
                 );
                 tile.set_state(&CameraState::Failed(reason));
@@ -811,6 +940,11 @@ impl Dashboard {
                     self.notifier.motion(&name);
                 }
             }
+            EventKind::Detected(alerts) => {
+                if self.notify_detection {
+                    self.notifier.detected(&name, &alerts);
+                }
+            }
         }
         self.update_summary();
     }
@@ -837,6 +971,8 @@ impl Dashboard {
                 self.fullscreen.set_detail(&detail);
                 self.fullscreen
                     .set_motion(slot.tile.stats().motion_recent(MOTION_BADGE_DURATION));
+                self.fullscreen
+                    .set_detection_summary(slot.tile.detection_summary().as_deref());
             }
         }
         self.sync_listening();
@@ -1060,6 +1196,7 @@ fn build_window(app: &gtk::Application, bootstrap: &Bootstrap) -> SupervisorsDon
         snapshot_dir: config.snapshot_dir(),
         adaptive_stream: config.app.adaptive_stream,
         notify_motion: config.motion.enabled && config.motion.notify,
+        notify_detection: config.detection.notify,
         tray_updates: tray_tx,
         last_tray_summary: RefCell::new(TraySummary::default()),
         config: Rc::clone(&config),
@@ -1111,6 +1248,7 @@ fn spawn_loops(
                 UiAction::ToggleRecording(id) => target.toggle_recording(id),
                 UiAction::ToggleListen(id) => target.toggle_listen(id),
                 UiAction::SetQuality(id, quality) => target.set_quality(id, quality),
+                UiAction::ConfigureDetection(id) => manage::show_detection(&target, id),
                 UiAction::ShowCameras => manage::show_cameras(&target),
                 UiAction::AddManual => manage::show_add_device(&target, None),
                 UiAction::ScanNetwork => manage::show_scan(&target),

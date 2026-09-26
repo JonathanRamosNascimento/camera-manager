@@ -99,6 +99,13 @@ window.camera-manager {
     background-color: #d97706;
 }
 
+/* Objetos vistos agora: o texto ("pessoa ×2") vem em minúsculas do modelo. */
+.badge-detect {
+    background-color: #2563eb;
+    font-family: sans-serif;
+    letter-spacing: 0;
+}
+
 /* ---- overlay de status ------------------------------------------------- */
 
 .tile-center {
@@ -200,5 +207,12 @@ window.camera-manager {
 
 .listening-on {
     color: #4ade80;
+    opacity: 1;
+}
+
+/* ---- identificação de objetos ligada -------------------------------------- */
+
+.detect-on {
+    color: #60a5fa;
     opacity: 1;
 }

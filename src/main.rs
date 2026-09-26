@@ -9,6 +9,7 @@ mod audio;
 mod bundle;
 mod camera;
 mod config;
+mod detection;
 mod discovery;
 mod motion;
 mod notify;
@@ -232,6 +233,22 @@ async fn check(config: &Config, store: &Store) -> Result<()> {
     println!("\nSaídas:");
     println!("  Capturas:  {}", config.snapshot_dir().display());
     println!("  Gravações: {}", config.recording_dir().display());
+    let detecting = store
+        .devices
+        .iter()
+        .flat_map(|d| &d.channels)
+        .filter(|c| c.detection.enabled)
+        .count();
+    let model = config.detection.model_file();
+    println!(
+        "  Detecção de objetos: {detecting} câmera(s) — modelo {} ({})",
+        model.display(),
+        if model.is_file() {
+            "presente"
+        } else {
+            "será baixado ao ligar"
+        }
+    );
     println!(
         "  Movimento: {}",
         if config.motion.enabled {

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use crate::config::{App, MASK};
+use crate::detection::DetectionSettings;
 use crate::store::{ChannelEntry, Device};
 
 /// Caracteres que precisam ser escapados na seção `user:senha@` da URL.
@@ -105,6 +106,8 @@ pub struct Camera {
     pub nvr_id: String,
     pub host: String,
     pub port: u16,
+    /// Identificação de objetos desta câmera.
+    pub detection: DetectionSettings,
     urls: Arc<UrlTemplate>,
 }
 
@@ -214,6 +217,7 @@ pub fn build_one(
         nvr_id: device.id.clone(),
         host: device.host.clone(),
         port: device.port,
+        detection: entry.detection.clone(),
         urls: Arc::clone(urls),
     }
 }
@@ -298,6 +302,7 @@ mod tests {
                 channel: 1,
                 name: "Portão".into(),
                 stream: 0,
+                detection: Default::default(),
             }],
         }
     }
@@ -384,6 +389,7 @@ mod tests {
             channel: 3,
             name: "Quintal".into(),
             stream: 0,
+            detection: Default::default(),
         });
         let cameras = build_device(5, &d, &app(""));
         assert_eq!(cameras.iter().map(|c| c.id).collect::<Vec<_>>(), vec![5, 6]);

@@ -128,6 +128,56 @@ cooldown_secs = 10
 notify = false
 
 # ---------------------------------------------------------------------------
+# Identificação de objetos (YOLO)
+#
+# Quais câmeras usam, e quais classes cada uma reconhece (pessoa, cachorro, gato,
+# carro, moto…), você escolhe POR CÂMERA na interface: clique no botão de olho no
+# card (ou em "Objetos…" na tela cheia) e abre a tela de configuração.
+#
+# Aqui ficam só os ajustes comuns a todas. Tudo é opcional.
+# Custa CPU (~150 ms por análise, no YOLOv8n): use `cargo run --release`.
+# ---------------------------------------------------------------------------
+
+[detection]
+# Modelo YOLO v8/v11 em ONNX, com as 80 classes COCO. Padrão:
+# <config>/camera-manager/models/yolov8n.onnx — baixado na primeira vez que
+# uma câmera liga a detecção. `~` é expandido.
+# model_path = "~/modelos/yolo11s.onnx"
+
+# De onde baixar o modelo quando `model_path` não existe. O padrão é o YOLOv8n
+# fixado no código, verificado por SHA-256. Se trocar a URL, informe também o
+# hash (64 dígitos hex) — sem ele o download não é verificado.
+# model_url = "https://exemplo.com/yolo11s.onnx"
+# model_sha256 = "…"
+
+# Lado do quadrado de entrada do modelo (múltiplo de 32, 160–1280). Precisa
+# bater com o tamanho da exportação do .onnx. 320 é ~4× mais rápido que 640.
+input_size = 640
+
+# Intervalo entre análises de uma mesma câmera, em milissegundos.
+# 500 = 2 análises por segundo. Aumente para poupar CPU.
+interval_ms = 500
+
+# Confiança mínima (0.01–0.99) das câmeras que não definem a própria na
+# interface. Menor = acha mais coisas e erra mais.
+confidence = 0.45
+
+# Sobreposição (IoU, 0.0–1.0) acima da qual duas caixas da mesma classe são
+# tratadas como o mesmo objeto.
+iou = 0.45
+
+# Threads de inferência, divididas entre todas as câmeras (1–16). A análise que
+# não couber nelas é descartada: o vídeo nunca atrasa por causa da detecção.
+workers = 2
+
+# Tempo mínimo entre dois avisos da mesma classe na mesma câmera. Só avisa
+# quando o objeto APARECE: uma pessoa parada na frente da câmera avisa uma vez.
+cooldown_secs = 30
+
+# Notificação do desktop quando um objeto aparece.
+notify = true
+
+# ---------------------------------------------------------------------------
 # Notificações e ícone na bandeja
 # ---------------------------------------------------------------------------
 

@@ -23,9 +23,11 @@ use gtk::prelude::*;
 use gtk::{gdk, glib};
 
 use crate::camera::{Camera, Quality};
+use crate::detection::DetectionState;
 use crate::pipeline::StreamStats;
 use crate::reconnect::CameraState;
 use crate::ui::UiAction;
+use crate::ui::detection_overlay::DetectionOverlay;
 
 /// Ícone do botão de gravar (câmera de vídeo) e o de parar, usados no card e
 /// na tela cheia.
@@ -34,6 +36,8 @@ pub const STOP_ICON: &str = "media-playback-stop-symbolic";
 /// Alto-falante desligado / ligado, no botão de ouvir o áudio.
 pub const LISTEN_OFF_ICON: &str = "audio-volume-muted-symbolic";
 pub const LISTEN_ON_ICON: &str = "audio-volume-high-symbolic";
+/// Olho: liga/desliga a identificação de objetos.
+pub const DETECT_ICON: &str = "view-reveal-symbolic";
 
 /// Classes CSS mutuamente exclusivas aplicadas ao "LED" de status.
 const STATUS_CLASSES: [&str; 3] = ["status-live", "status-connecting", "status-error"];
@@ -48,6 +52,11 @@ pub struct CameraTile {
     detail: gtk::Label,
     rec_badge: gtk::Label,
     motion_badge: gtk::Label,
+    /// Objetos vistos agora ("pessoa ×2 · cachorro").
+    detect_badge: gtk::Label,
+    /// Mantém o widget das caixas vivo enquanto o card existir.
+    _overlay: DetectionOverlay,
+    detection: Option<Arc<DetectionState>>,
     record_button: gtk::Button,
     listen_button: gtk::Button,
     center: gtk::Box,
@@ -71,6 +80,7 @@ impl CameraTile {
         camera: &Camera,
         paintable: Option<&gdk::Paintable>,
         stats: Arc<StreamStats>,
+        detection: Option<Arc<DetectionState>>,
         actions: &async_channel::Sender<UiAction>,
     ) -> Self {
         let picture = gtk::Picture::builder()
@@ -86,6 +96,11 @@ impl CameraTile {
             .vexpand(true)
             .child(&picture)
             .build();
+
+        // Caixas da identificação de objetos, entre o vídeo e a faixa superior.
+        let overlay = DetectionOverlay::new();
+        overlay.set_source(detection.clone());
+        root.add_overlay(overlay.widget());
 
         // ---- faixa superior -------------------------------------------------
         let dot = gtk::Label::builder()
@@ -113,6 +128,7 @@ impl CameraTile {
 
         let rec_badge = badge("REC", "badge-rec");
         let motion_badge = badge("MOV", "badge-motion");
+        let detect_badge = badge("", "badge-detect");
 
         let detail = gtk::Label::builder()
             .label("—")
@@ -146,6 +162,18 @@ impl CameraTile {
         let snapshot_button = tool_button("camera-photo-symbolic", "Capturar PNG (Ctrl+S)");
         let record_button = tool_button(RECORD_ICON, "Gravar (Ctrl+R)");
         let listen_button = tool_button(LISTEN_OFF_ICON, "Ouvir o áudio (Ctrl+M)");
+        let detect_button = tool_button(DETECT_ICON, "Identificação de objetos…");
+        if camera.detection.enabled {
+            detect_button.add_css_class("detect-on");
+            detect_button.set_tooltip_text(Some(
+                "Identificação de objetos ligada — clique para configurar",
+            ));
+        }
+        connect_action(
+            &detect_button,
+            actions,
+            UiAction::ConfigureDetection(camera.id),
+        );
         connect_action(&listen_button, actions, UiAction::ToggleListen(camera.id));
         connect_action(&snapshot_button, actions, UiAction::Snapshot(camera.id));
         connect_action(
@@ -166,8 +194,10 @@ impl CameraTile {
             name.upcast_ref(),
             rec_badge.upcast_ref(),
             motion_badge.upcast_ref(),
+            detect_badge.upcast_ref(),
             detail.upcast_ref(),
             quality_selector.upcast_ref(),
+            detect_button.upcast_ref(),
             snapshot_button.upcast_ref(),
             listen_button.upcast_ref(),
             record_button.upcast_ref(),
@@ -238,6 +268,9 @@ impl CameraTile {
             detail,
             rec_badge,
             motion_badge,
+            detect_badge,
+            _overlay: overlay,
+            detection,
             record_button,
             listen_button,
             center,
@@ -355,9 +388,21 @@ impl CameraTile {
     pub fn tick(&self, summary: &str) {
         self.motion_badge
             .set_visible(self.stats.motion_recent(MOTION_BADGE_DURATION));
+        match self.detection_summary() {
+            Some(summary) => {
+                self.detect_badge.set_label(&summary);
+                self.detect_badge.set_visible(true);
+            }
+            None => self.detect_badge.set_visible(false),
+        }
         if self.live.get() {
             self.detail.set_label(summary);
         }
+    }
+
+    /// Objetos vistos neste instante, ou `None` (detecção desligada ou nada à vista).
+    pub fn detection_summary(&self) -> Option<String> {
+        self.detection.as_ref().and_then(|state| state.summary())
     }
 
     /// Consome os contadores e devolve a linha "1920×1080 · 25 fps · 1,8 Mb/s".

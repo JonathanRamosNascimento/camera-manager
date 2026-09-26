@@ -11,10 +11,13 @@ gst = { version = "0.25.3", package = "gstreamer" }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_12"] }
 percent-encoding = "2.3.2"
 serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.11.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "time", "net", "macros"] }
 toml = "1.1.5"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+tract-onnx = "0.23.8"
+ureq = "3.4.2"
 
 # Ícone de bandeja (StatusNotifierItem/D-Bus): só existe no Linux.
 [target.'cfg(target_os = "linux")'.dependencies]

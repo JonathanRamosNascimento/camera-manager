@@ -84,6 +84,8 @@ pub enum EventKind {
     Recording(RecordingStatus),
     /// O detector de movimento disparou.
     Motion,
+    /// Objetos que acabaram de aparecer (já respeitando o cooldown por classe).
+    Detected(Vec<crate::detection::Alert>),
 }
 
 /// Ordens da UI para o supervisor.
@@ -356,6 +358,20 @@ impl Supervisor {
                         tracing::info!(camera = %label, "movimento detectado");
                         if self.emit(EventKind::Motion).await.is_err() {
                             return Outcome::Shutdown;
+                        }
+                    }
+
+                    if let Some(detection) = &self.handle.detection {
+                        let alerts = detection.take_alerts();
+                        if !alerts.is_empty() {
+                            tracing::info!(
+                                camera = %label,
+                                objetos = %alerts.iter().map(|a| a.label()).collect::<Vec<_>>().join(", "),
+                                "objetos detectados"
+                            );
+                            if self.emit(EventKind::Detected(alerts)).await.is_err() {
+                                return Outcome::Shutdown;
+                            }
                         }
                     }
 

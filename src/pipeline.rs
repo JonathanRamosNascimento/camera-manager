@@ -3,7 +3,8 @@
 //! Topologia:
 //! ```text
 //!                        ┌─ queue ─▶ decodebin ─▶ tee_raw ─┬─ queue ─▶ gtk4paintablesink
-//!  rtspsrc ─▶ tee_rtp ───┤                                 └─ queue ─▶ videoconvert ─▶ GRAY8 80×45 ─▶ fakesink   (movimento, opcional)
+//!                        │                                 ├─ queue ─▶ videoconvert ─▶ GRAY8 80×45 ─▶ fakesink   (movimento, opcional)
+//!  rtspsrc ─▶ tee_rtp ───┤                                 └─ queue ─▶ videoconvert ─▶ RGB 640×N ─▶ fakesink     (detecção de objetos, opcional)
 //!                        └─ queue ─▶ parsebin ─▶ splitmuxsink              (gravação, ramo dinâmico)
 //! ```
 //!
@@ -26,6 +27,7 @@ use gtk::gdk;
 
 use crate::audio::AudioState;
 use crate::camera::Camera;
+use crate::detection::{DetectionState, Engine};
 use crate::motion::MotionDetector;
 
 /// Origem monotônica compartilhada, para guardar instantes em `AtomicU64`.
@@ -172,6 +174,9 @@ pub struct PipelineOptions {
     pub protocols: String,
     /// Detector de movimento; `None` desliga o ramo de análise.
     pub motion: Option<Arc<MotionDetector>>,
+    /// Motor e parâmetros da identificação de objetos. Quais câmeras a usam é
+    /// decidido por câmera (`Camera::detection`).
+    pub detection: DetectionOptions,
     /// Segurar a saída até o primeiro keyframe, em vez de mostrar os quadros
     /// incompletos que antecedem ele.
     pub wait_for_keyframe: bool,
@@ -179,10 +184,38 @@ pub struct PipelineOptions {
     pub convert_video: bool,
 }
 
+/// O que a identificação de objetos precisa saber, igual para todas as câmeras.
+#[derive(Debug, Clone)]
+pub struct DetectionOptions {
+    pub engine: Arc<Engine>,
+    /// Intervalo entre análises de uma câmera.
+    pub interval: Duration,
+    /// Confiança mínima das câmeras que não definem a própria.
+    pub confidence: f32,
+    /// Tempo mínimo entre dois avisos da mesma classe.
+    pub cooldown: Duration,
+    /// Lado do quadrado de entrada do modelo, que também é a largura do
+    /// quadro enviado à análise.
+    pub input_size: usize,
+}
+
+impl DetectionOptions {
+    pub fn from_config(config: &crate::config::Detection) -> Self {
+        Self {
+            engine: Arc::new(Engine::new(config.clone())),
+            interval: Duration::from_millis(config.interval_ms),
+            confidence: config.confidence,
+            cooldown: Duration::from_secs(config.cooldown_secs),
+            input_size: config.input_size,
+        }
+    }
+}
+
 impl PipelineOptions {
     pub fn from_config(config: &crate::config::Config) -> Self {
         Self {
             latency_ms: config.app.latency_ms,
+            detection: DetectionOptions::from_config(&config.detection),
             protocols: config.app.rtsp_protocols.clone(),
             motion: config
                 .motion
@@ -215,6 +248,8 @@ pub struct CameraPipeline {
     tee_rtp: gst::Element,
     /// Som da câmera: desligado até o usuário pedir para ouvir.
     pub audio: Arc<AudioState>,
+    /// Identificação de objetos; `None` quando desligada nesta câmera.
+    pub detection: Option<Arc<DetectionState>>,
     label: String,
 }
 
@@ -322,6 +357,24 @@ pub fn build(camera: &Camera, opts: &PipelineOptions) -> Result<Built> {
             .context("falha ao montar o ramo de detecção de movimento")?;
     }
 
+    // Uma falha aqui (plugin de vídeo ausente, por exemplo) só tira a
+    // identificação de objetos: a câmera continua mostrando imagem.
+    let detection = camera
+        .detection
+        .enabled
+        .then(|| attach_detection_branch(&pipeline, &tee_raw, camera, &opts.detection))
+        .and_then(|attached| match attached {
+            Ok(state) => Some(state),
+            Err(err) => {
+                tracing::error!(
+                    camera = %camera.label(),
+                    erro = %format!("{err:#}"),
+                    "não consegui montar o ramo de detecção de objetos"
+                );
+                None
+            }
+        });
+
     tune_autoplugged_elements(&decode, camera.label(), opts.wait_for_keyframe);
     let audio = Arc::new(AudioState::default());
     link_rtspsrc_to_tee(
@@ -341,6 +394,7 @@ pub fn build(camera: &Camera, opts: &PipelineOptions) -> Result<Built> {
             src,
             tee_rtp,
             audio,
+            detection,
             label: camera.label(),
         },
     })
@@ -620,6 +674,95 @@ fn attach_motion_branch(
     });
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Ramo de identificação de objetos
+// ---------------------------------------------------------------------------
+
+/// Deriva uma cópia RGB na largura do modelo, a poucos quadros por segundo, e a
+/// entrega ao [`Engine`]. A inferência roda nas threads dele: o probe só copia
+/// o quadro, e a fila com vaga única por câmera descarta o excesso.
+fn attach_detection_branch(
+    pipeline: &gst::Pipeline,
+    tee_raw: &gst::Element,
+    camera: &Camera,
+    opts: &DetectionOptions,
+) -> Result<Arc<DetectionState>> {
+    let queue = live_queue("q-detect")?;
+    let convert = make("videoconvert", "detect-convert")?;
+    let scale = make("videoscale", "detect-scale")?;
+    let rate = make("videorate", "detect-rate")?;
+    // Só descarta quadros: nunca duplica para "completar" a taxa pedida.
+    rate.set_property("drop-only", true);
+    let filter = make("capsfilter", "detect-caps")?;
+    filter.set_property(
+        "caps",
+        gst::Caps::builder("video/x-raw")
+            .field("format", "RGB")
+            .field("width", opts.input_size as i32)
+            // Sem isto, o `videoscale` só troca a largura e guarda a proporção
+            // num pixel-aspect-ratio: o modelo veria a imagem espremida e a
+            // altura do quadro deixaria de refletir a proporção do vídeo.
+            .field("pixel-aspect-ratio", gst::Fraction::new(1, 1))
+            .field(
+                "framerate",
+                gst::Fraction::new(1000, opts.interval.as_millis().clamp(1, 60_000) as i32),
+            )
+            .build(),
+    );
+    let sink = make("fakesink", "detect-sink")?;
+    sink.set_property("sync", false);
+    sink.set_property("async", false);
+
+    let elements = [&queue, &convert, &scale, &rate, &filter, &sink];
+    pipeline.add_many(elements)?;
+    gst::Element::link_many(elements)?;
+    tee_raw.link(&queue)?;
+
+    // Uma detecção vale por alguns intervalos: some sozinha se a análise
+    // atrasar ou parar, em vez de deixar caixas velhas na tela.
+    let ttl = (opts.interval * 3).max(Duration::from_secs(2));
+    let state = Arc::new(DetectionState::new(
+        Arc::clone(&opts.engine),
+        &camera.detection,
+        opts.confidence,
+        opts.cooldown,
+        ttl,
+    ));
+    opts.engine.prepare();
+
+    let pad = sink.static_pad("sink").context("fakesink sem pad `sink`")?;
+    let probe_state = Arc::clone(&state);
+    pad.add_probe(gst::PadProbeType::BUFFER, move |pad, info| {
+        let Some(gst::PadProbeData::Buffer(buffer)) = &info.data else {
+            return gst::PadProbeReturn::Ok;
+        };
+        if !probe_state.try_begin() {
+            return gst::PadProbeReturn::Ok;
+        }
+        let dims = pad
+            .current_caps()
+            .and_then(|caps| {
+                let s = caps.structure(0)?;
+                Some((s.get::<i32>("width").ok()?, s.get::<i32>("height").ok()?))
+            })
+            .filter(|&(w, h)| w > 0 && h > 0)
+            .map(|(w, h)| (w as usize, h as usize));
+        let frame = dims.and_then(|(w, h)| {
+            let map = buffer.map_readable().ok()?;
+            // RGB sem padding de linha (largura múltipla de 4): é o que o
+            // modelo espera. Qualquer outra coisa é ignorada.
+            (map.len() == w * h * 3).then(|| (map.as_slice().to_vec(), w, h))
+        });
+        match frame {
+            Some((rgb, w, h)) => probe_state.engine().submit(rgb, w, h, &probe_state),
+            None => probe_state.finish(),
+        }
+        gst::PadProbeReturn::Ok
+    });
+
+    Ok(state)
 }
 
 // ---------------------------------------------------------------------------

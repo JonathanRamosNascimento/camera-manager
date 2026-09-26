@@ -99,6 +99,8 @@ pub struct Config {
     #[serde(default)]
     pub motion: Motion,
     #[serde(default)]
+    pub detection: Detection,
+    #[serde(default)]
     pub notifications: Notifications,
 }
 
@@ -217,6 +219,48 @@ pub struct Motion {
     pub notify: bool,
 }
 
+/// Identificação de objetos (YOLO).
+///
+/// Quais câmeras usam e quais classes reconhecem é escolhido **por câmera**, na
+/// janela de edição; aqui fica o que vale para todas.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Detection {
+    /// Modelo YOLO (v8/v11, COCO 80 classes) em ONNX. Padrão:
+    /// `<config>/camera-manager/models/yolov8n.onnx`.
+    #[serde(default)]
+    pub model_path: Option<String>,
+    /// De onde baixar o modelo quando `model_path` não existe. Padrão: o
+    /// YOLOv8n fixado no código, verificado por SHA-256.
+    #[serde(default)]
+    pub model_url: Option<String>,
+    /// SHA-256 esperado do download. Sem `model_url` próprio, vale o do padrão.
+    #[serde(default)]
+    pub model_sha256: Option<String>,
+    /// Lado do quadrado de entrada do modelo (múltiplo de 32). Precisa bater
+    /// com o que o `.onnx` foi exportado (640 é o padrão do Ultralytics).
+    #[serde(default = "default_detection_input_size")]
+    pub input_size: usize,
+    /// Intervalo entre análises de uma mesma câmera, em milissegundos.
+    #[serde(default = "default_detection_interval_ms")]
+    pub interval_ms: u64,
+    /// Confiança mínima (0.0–1.0) das câmeras que não definem a própria.
+    #[serde(default = "default_detection_confidence")]
+    pub confidence: f32,
+    /// IoU acima do qual duas caixas da mesma classe são o mesmo objeto.
+    #[serde(default = "default_detection_iou")]
+    pub iou: f32,
+    /// Threads de inferência, compartilhadas por todas as câmeras.
+    #[serde(default = "default_detection_workers")]
+    pub workers: usize,
+    /// Tempo mínimo entre dois avisos da mesma classe na mesma câmera.
+    #[serde(default = "default_detection_cooldown_secs")]
+    pub cooldown_secs: u64,
+    /// Manda uma notificação do desktop quando um objeto aparece.
+    #[serde(default = "default_true")]
+    pub notify: bool,
+}
+
 /// Notificações do desktop e ícone na bandeja.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -280,6 +324,37 @@ impl Default for Motion {
     }
 }
 
+impl Default for Detection {
+    fn default() -> Self {
+        Self {
+            model_path: None,
+            model_url: None,
+            model_sha256: None,
+            input_size: default_detection_input_size(),
+            interval_ms: default_detection_interval_ms(),
+            confidence: default_detection_confidence(),
+            iou: default_detection_iou(),
+            workers: default_detection_workers(),
+            cooldown_secs: default_detection_cooldown_secs(),
+            notify: true,
+        }
+    }
+}
+
+impl Detection {
+    /// Onde o modelo fica no disco, com `~` expandido.
+    pub fn model_file(&self) -> PathBuf {
+        match &self.model_path {
+            Some(raw) => expand_tilde(raw),
+            None => user_config_dir()
+                .unwrap_or_else(|| PathBuf::from(home_dir()))
+                .join(OUTPUT_SUBDIR)
+                .join("models")
+                .join("yolov8n.onnx"),
+        }
+    }
+}
+
 impl Default for Notifications {
     fn default() -> Self {
         Self {
@@ -325,6 +400,24 @@ fn default_motion_sensitivity() -> f64 {
 }
 fn default_motion_cooldown_secs() -> u64 {
     10
+}
+fn default_detection_input_size() -> usize {
+    640
+}
+fn default_detection_interval_ms() -> u64 {
+    500
+}
+fn default_detection_confidence() -> f32 {
+    crate::detection::DEFAULT_CONFIDENCE
+}
+fn default_detection_iou() -> f32 {
+    0.45
+}
+fn default_detection_workers() -> usize {
+    2
+}
+fn default_detection_cooldown_secs() -> u64 {
+    30
 }
 fn default_offline_after_attempts() -> u32 {
     2
@@ -417,6 +510,28 @@ impl Config {
         }
         if !(0.0..=1.0).contains(&self.motion.sensitivity) {
             bail!("`motion.sensitivity` precisa estar entre 0.0 e 1.0");
+        }
+        let detection = &self.detection;
+        if !(160..=1280).contains(&detection.input_size) || !detection.input_size.is_multiple_of(32)
+        {
+            bail!("`detection.input_size` precisa ser múltiplo de 32, entre 160 e 1280");
+        }
+        if detection.interval_ms < 50 {
+            bail!("`detection.interval_ms` precisa ser >= 50");
+        }
+        if !(0.01..=0.99).contains(&detection.confidence) {
+            bail!("`detection.confidence` precisa estar entre 0.01 e 0.99");
+        }
+        if !(0.0..=1.0).contains(&detection.iou) {
+            bail!("`detection.iou` precisa estar entre 0.0 e 1.0");
+        }
+        if !(1..=16).contains(&detection.workers) {
+            bail!("`detection.workers` precisa estar entre 1 e 16");
+        }
+        if let Some(hash) = &detection.model_sha256
+            && (hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()))
+        {
+            bail!("`detection.model_sha256` precisa ter 64 dígitos hexadecimais");
         }
 
         Ok(())
@@ -657,6 +772,62 @@ mod tests {
         assert!(config.motion.notify);
         assert!(!config.notifications.tray);
         assert!(config.recording_dir().ends_with("gravacoes"));
+    }
+
+    #[test]
+    fn deteccao_tem_padroes_sensatos() {
+        let config = parse("").unwrap();
+        let d = &config.detection;
+        assert_eq!((d.input_size, d.interval_ms, d.workers), (640, 500, 2));
+        assert_eq!(d.cooldown_secs, 30);
+        assert!(d.notify);
+        assert!(d.model_path.is_none() && d.model_url.is_none());
+        assert!(d.model_file().ends_with("models/yolov8n.onnx"));
+    }
+
+    #[test]
+    fn deteccao_aceita_ajustes_e_expande_o_caminho_do_modelo() {
+        let config = parse(
+            r#"
+            [detection]
+            model_path = "~/modelos/yolo11n.onnx"
+            input_size = 320
+            interval_ms = 1000
+            confidence = 0.6
+            workers = 4
+            notify = false
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.detection.input_size, 320);
+        assert_eq!(config.detection.confidence, 0.6);
+        assert!(!config.detection.notify);
+        assert!(
+            config
+                .detection
+                .model_file()
+                .ends_with("modelos/yolo11n.onnx")
+        );
+        assert!(!config.detection.model_file().starts_with("~"));
+    }
+
+    #[test]
+    fn deteccao_rejeita_valores_invalidos() {
+        for (raw, campo) in [
+            ("[detection]\ninput_size = 100\n", "detection.input_size"),
+            ("[detection]\ninput_size = 650\n", "detection.input_size"),
+            ("[detection]\ninterval_ms = 10\n", "detection.interval_ms"),
+            ("[detection]\nconfidence = 0.0\n", "detection.confidence"),
+            ("[detection]\niou = 1.5\n", "detection.iou"),
+            ("[detection]\nworkers = 0\n", "detection.workers"),
+            (
+                "[detection]\nmodel_sha256 = \"abc\"\n",
+                "detection.model_sha256",
+            ),
+        ] {
+            let err = parse(raw).unwrap_err().to_string();
+            assert!(err.contains(campo), "{raw:?} -> {err}");
+        }
     }
 
     #[test]

@@ -16,6 +16,10 @@ license=('custom')
 depends=('gtk4' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-plugins-bad'
          'gst-libav' 'gst-plugin-gtk4')
 makedepends=('cargo' 'pkgconf')
+# O `lto` padrão do makepkg põe -flto no CFLAGS; o `ring` (TLS do download do modelo)
+# então gera objetos C que o rust-lld não sabe ligar ("undefined symbol: ring_core_…").
+# O Rust já otimiza sozinho, então nada se perde.
+options=('!lto')
 conflicts=('nvr-dashboard')
 replaces=('nvr-dashboard')
 optdepends=('gst-plugin-pipewire: áudio via PipeWire'

@@ -4,7 +4,8 @@ Dashboard nativo para Linux (Rust + GTK4 + GStreamer) que mostra ao vivo, num
 grid, as câmeras de um NVR iCSee/XMEye (firmware Hi3520) ou câmeras IP via
 RTSP. As câmeras são cadastradas pela própria janela — manualmente ou
 **escaneando a rede** — e o app cuida de reconexão automática, captura de tela,
-gravação sob demanda, áudio, detecção de movimento e ícone na bandeja.
+gravação sob demanda, áudio, detecção de movimento, **identificação de objetos
+(pessoa, cachorro, carro…) com YOLO** e ícone na bandeja.
 
 **Roda em Linux, Windows e macOS**, com instaladores para cada um — veja
 [Instalação](#instalação).
@@ -98,6 +99,10 @@ Tudo isso é salvo entre execuções. Detalhes nas seções abaixo.
 **Automação**
 
 - Detecção de movimento por diferença de quadros, com sensibilidade e cooldown configuráveis
+- **Identificação de objetos (YOLO)**, ligada câmera por câmera: você escolhe quais das 80 classes
+  reconhecer (pessoa, cachorro, gato, carro, moto…), com caixas sobre o vídeo, selo no card e
+  notificação quando algo aparece — tudo rodando no seu computador, veja
+  [Identificação de objetos](#identificação-de-objetos)
 - Notificações do desktop quando uma câmera cai e quando volta
 - Ícone na bandeja (StatusNotifierItem) com resumo e menu
 - Vários NVRs / câmeras IP no mesmo dashboard
@@ -347,7 +352,8 @@ Detalhes do `sudo make install` (Linux):
 > `NVR_DASHBOARD_CONFIG`/`NVR_DASHBOARD_DEVICES` continuam valendo. As pastas de
 > imagens e vídeos (`<Imagens>/nvr-dashboard`) não são movidas.
 
-Desinstalar o programa **não** apaga essa pasta (câmeras, layout, ajustes): assim uma
+O modelo de identificação de objetos baixado fica em `models/` dentro dessa pasta.
+Desinstalar o programa **não** apaga essa pasta (câmeras, layout, ajustes, modelo): assim uma
 reinstalação ou atualização mantém tudo.
 
 ### Gerando os instaladores
@@ -501,6 +507,27 @@ rtsp://{user_enc}:{password_enc}@{host}:{port}/user={user}&password={password}&c
 | `notifications` | `offline_after_attempts` | `2` | Só avisa a partir desta tentativa |
 | `notifications` | `tray` | `true` | Ícone na bandeja |
 
+O bloco `[detection]` (identificação de objetos) tem [a sua própria tabela](#detection--ajustes-globais).
+
+### `[detection]` — ajustes globais
+
+Quais câmeras identificam objetos, e quais classes cada uma reconhece, você escolhe
+**por câmera, na interface** (veja [Identificação de objetos](#identificação-de-objetos)).
+Este bloco só guarda o que vale para todas:
+
+| Chave | Padrão | Descrição |
+|---|---|---|
+| `model_path` | `<config>/camera-manager/models/yolov8n.onnx` | Modelo YOLO em ONNX. `~` é expandido |
+| `model_url` | YOLOv8n fixado no código | De onde baixar o modelo se `model_path` não existir |
+| `model_sha256` | o do modelo padrão | SHA-256 esperado do download (64 dígitos hex). Com `model_url` próprio, sem isto não há verificação |
+| `input_size` | `640` | Lado do quadrado de entrada do modelo; múltiplo de 32 (160–1280). Precisa bater com a exportação do `.onnx` |
+| `interval_ms` | `500` | Intervalo entre análises de uma câmera (500 = 2 quadros/s) |
+| `confidence` | `0.45` | Confiança mínima (0.01–0.99) das câmeras que não definem a própria |
+| `iou` | `0.45` | Sobreposição acima da qual duas caixas da mesma classe viram uma só |
+| `workers` | `2` | Threads de inferência, divididas entre todas as câmeras (1–16) |
+| `cooldown_secs` | `30` | Intervalo mínimo entre dois avisos da mesma classe na mesma câmera |
+| `notify` | `true` | Notificação do desktop quando um objeto aparece |
+
 ---
 
 ## Uso
@@ -581,6 +608,45 @@ salva em `quality.toml`, sobrepondo `adaptive_stream` no grid. Em tela cheia,
 com `adaptive_stream = true` a câmera sempre sobe para o stream principal e, ao
 voltar, retorna à qualidade escolhida.
 
+### Identificação de objetos
+
+Um modelo **YOLO** reconhece objetos no vídeo e desenha uma caixa com o nome e a
+confiança sobre cada um (no card e na tela cheia). É opcional e **desligado por
+padrão**: custa CPU, então ligue só nas câmeras que precisam.
+
+**Abrir a tela de configuração:** clique no **olho** (👁) da faixa do card — ou em **Objetos…**,
+na tela cheia. O olho fica azul enquanto a detecção está ativa. Ela abre uma tela só para isso,
+com:
+
+- **Identificar objetos nesta câmera** — liga e desliga;
+- **Confiança mínima** — menor acha mais coisas e erra mais; maior só mostra o que tem
+  certeza. Se você não mexer, vale o padrão de `[detection].confidence`;
+- **O que reconhecer** — as 80 classes do COCO (pessoa, bicicleta, carro, moto, ônibus,
+  caminhão, gato, cachorro, pássaro, cavalo, mochila…), com as mais comuns no topo, e
+  botões **Marcar todas** / **Limpar**. Ao ligar pela primeira vez vêm marcadas: pessoa,
+  bicicleta, carro, moto, ônibus, caminhão, gato e cachorro.
+
+Na primeira vez que alguém liga a detecção o app baixa o modelo (~12 MB, uma vez só; o
+progresso aparece sobre o vídeo).
+
+Mudar classes ou confiança vale **na hora**. Ligar ou desligar a detecção reinicia a
+conexão daquela câmera (ela volta no mesmo lugar do grid, mas uma gravação em andamento
+é encerrada).
+
+**Avisos:** quando um objeto **aparece** (não era visto havia alguns segundos), o app
+notifica ("Rua — pessoa ×2, cachorro"), respeitando `cooldown_secs` por classe: uma
+pessoa parada na frente da câmera avisa uma vez, não a cada 30 s.
+
+**Quanto custa:** o YOLOv8n leva ~150 ms por análise numa CPU comum. Com
+`interval_ms = 500` são ~30 % de um núcleo por câmera; `workers` limita quantas análises
+rodam ao mesmo tempo, e o que passar disso é descartado (a detecção atrasa, o vídeo não).
+Para poupar CPU aumente `interval_ms`.
+
+**Outro modelo:** aponte `model_path` para qualquer YOLO **v8 ou v11** exportado para
+ONNX com as 80 classes COCO (`yolo export model=yolo11s.pt format=onnx`). Modelos maiores
+(`s`, `m`) acertam mais e custam proporcionalmente mais CPU. Se o `.onnx` foi exportado
+com outro tamanho de entrada, ajuste `input_size`.
+
 ### Indicadores
 
 | Elemento | Significado |
@@ -590,6 +656,8 @@ voltar, retorna à qualidade escolhida.
 | ● vermelho | reconectando ou falha |
 | `REC` | gravando |
 | `MOV` | movimento detectado nos últimos 6 s |
+| `pessoa ×2 · cachorro` (azul) | objetos identificados agora |
+| 👁 azul | identificação de objetos ligada nesta câmera (clique para configurar) |
 | `1920×1080 · 12 fps · 1,8 Mb/s` | resolução, taxa de quadros e bitrate de rede |
 
 ---
@@ -608,6 +676,11 @@ src/
 ├── audio.rs        ramo de áudio sob demanda (ouvir a câmera)
 ├── recording.rs    ramo dinâmico de gravação (tee → parsebin → splitmuxsink)
 ├── motion.rs       detecção de movimento por diferença de quadros
+├── detection/      identificação de objetos (YOLO)
+│   ├── mod.rs        configuração por câmera, estado compartilhado, avisos
+│   ├── classes.rs    as 80 classes COCO (inglês + português)
+│   ├── yolo.rs       letterbox, inferência (tract), decodificação e NMS
+│   └── engine.rs     baixa/verifica/carrega o modelo e roda a fila de análises
 ├── reconnect.rs    Supervisor por câmera: bus, watchdog, backoff, comandos
 ├── notify.rs       notificações do desktop e ícone na bandeja (ksni)
 └── ui/
@@ -615,12 +688,13 @@ src/
     ├── grid.rs        grade em células: encaixe, realocação, arrastar/soltar
     ├── camera_tile.rs widget de uma câmera no grid
     ├── fullscreen.rs  view de câmera única
+    ├── detection_overlay.rs  caixas da identificação de objetos sobre o vídeo
     ├── manage.rs      janelas: lista, cadastro, edição e varredura
     ├── quality.rs     qualidade escolhida por câmera (quality.toml)
     ├── snapshot.rs    captura PNG via renderer do GTK
     └── style.css      tema escuro
 tools/
-├── fake_rtsp.py          servidor RTSP de teste (padrões do GStreamer)
+├── fake_rtsp.py          servidor RTSP de teste (padrões do GStreamer; --image serve uma foto)
 ├── setup-ubuntu.sh       prepara o Ubuntu 24.04: apt + Rust novo + plugin gtk4paintablesink
 ├── build-gtk4-plugin.sh  compila o gtk4paintablesink na versão do GStreamer instalado
 ├── build-deb.sh          gera o .deb (Debian/Ubuntu)
@@ -638,14 +712,15 @@ packaging/
 
 ```
                        ┌─ queue ─▶ decodebin ─▶ tee_raw ─┬─ queue ─▶ gtk4paintablesink
- rtspsrc ─▶ tee_rtp ───┤                                 └─ queue ─▶ videoconvert ─▶ GRAY8 80×45 ─▶ fakesink   (movimento)
+                       │                                 ├─ queue ─▶ videoconvert ─▶ GRAY8 80×45 ─▶ fakesink   (movimento)
+ rtspsrc ─▶ tee_rtp ───┤                                 └─ queue ─▶ videoconvert ─▶ RGB 640×N ─▶ fakesink     (objetos)
      │                 └─ queue ─▶ parsebin ─▶ splitmuxsink              (gravação, ramo dinâmico)
      └─ (pad de áudio) ─▶ queue ─▶ decodebin ─▶ audioconvert ─▶ autoaudiosink   (só ao ouvir, ramo dinâmico)
 ```
 
 Não há `videoconvert` no caminho de exibição: o sink aceita NV12/DMABuf direto,
 então o frame decodificado por hardware não é copiado para a CPU. A conversão
-existe só no ramo de movimento (e no de exibição se `convert_video = true`).
+existe só nos ramos de movimento e de objetos (e no de exibição se `convert_video = true`).
 
 `tee_rtp` deriva o stream **codificado**: gravar dali evita recodificar e
 mantém uma única conexão RTSP com o NVR. O ramo de gravação é adicionado e
@@ -655,6 +730,19 @@ pelo bus), de modo que o arquivo sempre é finalizado.
 
 A fila antes do decoder **não descarta** pacotes: perder um único pacote RTP de um
 keyframe corrompe o quadro e congela a imagem até o próximo IDR.
+
+#### Identificação de objetos
+
+O ramo de objetos (só existe nas câmeras com a detecção ligada) entrega ao motor um
+quadro RGB de largura 640, a `interval_ms`, com `pixel-aspect-ratio=1/1` fixo — sem isso o
+`videoscale` só troca a largura e o modelo veria a imagem espremida. O *pad probe*
+apenas **copia** o quadro: a inferência roda em threads próprias (`tract`, Rust puro, sem
+biblioteca nativa — os instaladores continuam sendo só o app), então nem o GStreamer nem
+o GTK esperam por ela. Cada câmera tem uma vaga só na fila, e o excesso é descartado.
+
+Resultados: as caixas (frações 0–1 do quadro) vão para um `DetectionState` que a UI lê ~7×/s
+para desenhar; um objeto que some por **um** quadro continua na tela mais um, para a caixa
+não piscar em casos limítrofes. Os avisos saem pelo supervisor, no mesmo laço do movimento.
 
 ### Threads e canais
 
@@ -736,6 +824,11 @@ keyframe corrompe o quadro e congela a imagem até o próximo IDR.
   `rtspsrc` ecoam a `location` completa. Dispositivos cadastrados depois também
   entram na lista.
 - As URLs mostradas em `--check`, nos logs e nos tooltips já vêm mascaradas.
+- A identificação de objetos roda **inteira no seu computador**: nenhum quadro de vídeo sai
+  dele. A única conexão de rede que ela faz é o download do modelo, uma vez, por HTTPS;
+  o arquivo é gravado num `.part` e só entra no lugar depois de o SHA-256 conferir com o
+  fixado no código (um download adulterado ou truncado é descartado). Se você trocar
+  `model_url` sem informar `model_sha256`, **não há verificação** — só use fontes em que confie.
 - A varredura de rede só abre conexões TCP na porta RTSP e envia um probe
   multicast ONVIF, dentro da sub-rede informada. Nenhuma credencial é enviada
   durante a varredura: o login só é usado depois, ao adicionar o dispositivo.
@@ -801,6 +894,22 @@ antes de concluir que a câmera está fora.
   protocolo DVRIP, que o app não implementa. O NVR informa suportar fala para as
   câmeras, então é uma evolução possível.
 
+### Identificação de objetos
+
+- **Só modelos COCO de 80 classes** (YOLOv8/v11). YOLOv5 (com *objectness*) e modelos que já
+  trazem NMS embutido (YOLOv10, exportações `nms=True`) não são suportados; modelos treinados
+  com outras classes são recusados com uma mensagem clara.
+- **CPU, não GPU:** o `tract` roda só na CPU. Com muitas câmeras, aumente `interval_ms`,
+  ou troque para um modelo menor/`input_size` menor (`320` é ~4× mais rápido, com menos
+  acerto em objetos pequenos).
+- **Use `--release`:** em build de debug a inferência é dezenas de vezes mais lenta.
+- **Objetos limítrofes piscam** (perto do limiar de confiança). Suba a confiança para
+  esconder os incertos ou desça para achar mais; a caixa é segurada por um quadro para
+  atenuar isso, não para escondê-lo.
+- Ligar/desligar reinicia a câmera (veja acima). Mudar só classes e confiança, não.
+- Câmeras noturnas em infravermelho e objetos muito pequenos/distantes são difíceis para o
+  YOLOv8n; um modelo maior (`s`/`m`) ajuda.
+
 ### Ícone na bandeja: só no Linux
 
 No Windows e no macOS não há ícone de bandeja (a implementação usa D-Bus/
@@ -859,7 +968,7 @@ gst-launch-1.0 rtspsrc location="rtsp://…" latency=200 ! decodebin ! autovideo
 ## Desenvolvimento
 
 ```sh
-cargo test                                  # 70 testes unitários (+1 manual, ignorado)
+cargo test                                  # 102 testes unitários (+1 manual, ignorado)
 cargo clippy --all-targets -- -D warnings
 cargo fmt
 make lint                                   # atalho para o clippy acima
@@ -869,8 +978,9 @@ Os testes cobrem parsing e defaults da configuração, o cadastro de dispositivo
 (gravação `600`, merge de canais, edição, arquivo corrompido), montagem e
 mascaramento de URL, backoff, a geometria do grid (encaixe e realocação, sem
 sobreposição em nenhuma combinação), a varredura (contra um listener local),
-contadores de estatística, o ramo de áudio e a detecção de movimento. Não
-precisam de rede nem de um NVR.
+contadores de estatística, o ramo de áudio, a detecção de movimento e a identificação
+de objetos (letterbox, decodificação da saída do YOLO, NMS, avisos com cooldown, geometria
+das caixas). Não precisam de rede, de um NVR nem do arquivo do modelo.
 
 Um teste manual (`#[ignore]`) exercita a detecção de canais num NVR de verdade:
 
@@ -886,13 +996,17 @@ NVR_TEST_HOST=192.168.1.10 NVR_TEST_USER=admin NVR_TEST_PASS=… \
 padrão do Python e o `gst-launch-1.0`:
 
 ```sh
-tools/fake_rtsp.py &
+tools/fake_rtsp.py &                    # ou:  tools/fake_rtsp.py --image rua.jpg
 # No app: Adicionar manualmente → 127.0.0.1, porta 8554, usuário/senha quaisquer,
 # canais 1-3, e em Avançado o modelo:  rtsp://{host}:{port}/cam{channel}
 # Em cameras.toml:  [app]  rtsp_protocols = "udp"   (o servidor só fala UDP)
 ```
 
 É o que gera as imagens deste README.
+
+Os padrões de teste não têm nada para o YOLO achar. Para experimentar a
+[identificação de objetos](#identificação-de-objetos), use `--image foto.jpg` (JPEG com
+pessoas, carros ou animais): a foto passa a ser servida, parada, em `/cam4`.
 
 ### Integração contínua e pacotes
 

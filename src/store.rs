@@ -17,6 +17,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{DEFAULT_URL_TEMPLATE, Secret};
+use crate::detection::DetectionSettings;
 
 pub const DEFAULT_RTSP_PORT: u16 = 554;
 const FILE_NAME: &str = "devices.toml";
@@ -29,6 +30,9 @@ pub struct ChannelEntry {
     /// `0` = stream principal, `1` = substream.
     #[serde(default)]
     pub stream: u8,
+    /// Identificação de objetos. Só é gravada quando o usuário mexeu nela.
+    #[serde(default, skip_serializing_if = "DetectionSettings::is_default")]
+    pub detection: DetectionSettings,
 }
 
 /// Um NVR ou câmera IP: um endereço, um login, vários canais.
@@ -253,6 +257,18 @@ impl Store {
         }
     }
 
+    /// Troca os ajustes de detecção de um canal.
+    pub fn set_detection(&mut self, device_id: &str, channel: u32, settings: DetectionSettings) {
+        if let Some(entry) = self
+            .devices
+            .iter_mut()
+            .find(|d| d.id == device_id)
+            .and_then(|d| d.channels.iter_mut().find(|c| c.channel == channel))
+        {
+            entry.detection = settings;
+        }
+    }
+
     /// Remove um canal; o dispositivo some junto quando fica sem canais.
     pub fn remove_channel(&mut self, device_id: &str, channel: u32) {
         if let Some(device) = self.devices.iter_mut().find(|d| d.id == device_id) {
@@ -309,6 +325,7 @@ mod tests {
                     channel,
                     name: format!("Câmera {channel}"),
                     stream: 0,
+                    detection: Default::default(),
                 })
                 .collect(),
         }

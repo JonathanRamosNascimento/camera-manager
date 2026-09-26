@@ -10,13 +10,16 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gtk::prelude::*;
 use gtk::{gdk, pango};
 
 use crate::camera::Camera;
+use crate::detection::DetectionState;
 use crate::reconnect::CameraState;
 use crate::ui::camera_tile::describe;
+use crate::ui::detection_overlay::DetectionOverlay;
 use crate::ui::{UiAction, camera_tile};
 
 const STATUS_CLASSES: [&str; 3] = ["status-live", "status-connecting", "status-error"];
@@ -29,8 +32,11 @@ pub struct FullscreenView {
     detail: gtk::Label,
     rec_badge: gtk::Label,
     motion_badge: gtk::Label,
+    detect_badge: gtk::Label,
+    overlay: DetectionOverlay,
     record_button: gtk::Button,
     listen_button: gtk::Button,
+    detect_button: gtk::Button,
     center: gtk::Box,
     spinner: gtk::Spinner,
     status: gtk::Label,
@@ -57,6 +63,8 @@ impl FullscreenView {
             .vexpand(true)
             .child(&picture)
             .build();
+        let detection_overlay = DetectionOverlay::new();
+        overlay.add_overlay(detection_overlay.widget());
 
         // ---- faixa superior -------------------------------------------------
         let dot = gtk::Label::builder()
@@ -71,6 +79,7 @@ impl FullscreenView {
             .build();
         let rec_badge = badge("REC", "badge-rec");
         let motion_badge = badge("MOV", "badge-motion");
+        let detect_badge = badge("", "badge-detect");
         let detail = gtk::Label::builder()
             .label("—")
             .css_classes(["tile-detail"])
@@ -88,6 +97,7 @@ impl FullscreenView {
             name.upcast_ref(),
             rec_badge.upcast_ref(),
             motion_badge.upcast_ref(),
+            detect_badge.upcast_ref(),
             detail.upcast_ref(),
         ] {
             bar.append(widget);
@@ -148,6 +158,17 @@ impl FullscreenView {
             .label("Ouvir")
             .tooltip_text("Ouve o áudio da câmera (Ctrl+M)")
             .build();
+        let detect_button = gtk::Button::builder()
+            .icon_name(camera_tile::DETECT_ICON)
+            .label("Objetos…")
+            .tooltip_text("Configura a identificação de objetos")
+            .build();
+        bind_current(
+            &detect_button,
+            actions,
+            &current,
+            UiAction::ConfigureDetection,
+        );
         bind_current(&listen_button, actions, &current, UiAction::ToggleListen);
         bind_current(&snapshot_button, actions, &current, UiAction::Snapshot);
         bind_current(&record_button, actions, &current, UiAction::ToggleRecording);
@@ -160,6 +181,7 @@ impl FullscreenView {
         toolbar.append(&back);
         let spacer = gtk::Box::builder().hexpand(true).build();
         toolbar.append(&spacer);
+        toolbar.append(&detect_button);
         toolbar.append(&snapshot_button);
         toolbar.append(&listen_button);
         toolbar.append(&record_button);
@@ -180,8 +202,11 @@ impl FullscreenView {
             detail,
             rec_badge,
             motion_badge,
+            detect_badge,
+            overlay: detection_overlay,
             record_button,
             listen_button,
+            detect_button,
             center,
             spinner,
             status,
@@ -201,8 +226,16 @@ impl FullscreenView {
     }
 
     /// Passa a exibir `camera`, reaproveitando o paintable da pipeline dela.
-    pub fn show(&self, camera: &Camera, paintable: Option<&gdk::Paintable>) {
+    pub fn show(
+        &self,
+        camera: &Camera,
+        paintable: Option<&gdk::Paintable>,
+        detection: Option<Arc<DetectionState>>,
+    ) {
         self.current.set(Some(camera.id));
+        self.set_detection_enabled(detection.is_some());
+        self.overlay.set_source(detection);
+        self.detect_badge.set_visible(false);
         self.picture.set_paintable(paintable);
         *self.paintable.borrow_mut() = paintable.cloned();
         self.name.set_label(&format!(
@@ -215,6 +248,7 @@ impl FullscreenView {
     /// Solta o paintable ao voltar para o grid, para não segurar referências.
     pub fn clear(&self) {
         self.current.set(None);
+        self.overlay.set_source(None);
         self.picture.set_paintable(gdk::Paintable::NONE);
         *self.paintable.borrow_mut() = None;
     }
@@ -281,6 +315,26 @@ impl FullscreenView {
 
     pub fn set_motion(&self, active: bool) {
         self.motion_badge.set_visible(active);
+    }
+
+    /// Selo com os objetos vistos agora; `None` esconde.
+    pub fn set_detection_summary(&self, summary: Option<&str>) {
+        match summary {
+            Some(text) => {
+                self.detect_badge.set_label(text);
+                self.detect_badge.set_visible(true);
+            }
+            None => self.detect_badge.set_visible(false),
+        }
+    }
+
+    /// Reflete no botão se a identificação de objetos está ligada nesta câmera.
+    pub fn set_detection_enabled(&self, on: bool) {
+        if on {
+            self.detect_button.add_css_class("detect-on");
+        } else {
+            self.detect_button.remove_css_class("detect-on");
+        }
     }
 }
 

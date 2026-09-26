@@ -7,6 +7,11 @@ usuário/senha. Usa só a biblioteca padrão do Python e o `gst-launch-1.0`.
 
     tools/fake_rtsp.py                 # escuta em 127.0.0.1:8554
     tools/fake_rtsp.py --port 9554
+    tools/fake_rtsp.py --image rua.jpg # também serve a foto, parada, em /cam4
+
+O `--image` serve para testar a identificação de objetos: uma foto com pessoas,
+carros ou animais dá ao detector algo de verdade para achar (os padrões de teste
+não têm nada). Aceita JPEG.
 
 Para o app usar, cadastre um dispositivo `127.0.0.1:8554` com o modelo de URL
 `rtsp://{host}:{port}/cam{channel}` (campo "Avançado") e ponha
@@ -38,6 +43,24 @@ def has_element(name: str) -> bool:
 
 # Os overlays (pango) faltam em instalações mínimas; sem eles o vídeo sai sem texto.
 OVERLAYS = has_element("textoverlay") and has_element("clockoverlay")
+
+
+# Foto servida em /cam4 (opção --image).
+IMAGE: str | None = None
+
+
+def image_pipeline(path: str, host: str, port: int) -> list[str]:
+    return [
+        "gst-launch-1.0", "-q",
+        "filesrc", f"location={path}", "!", "jpegdec", "!",
+        "imagefreeze", "is-live=true", "!",
+        "videoconvert", "!", "video/x-raw,framerate=15/1", "!",
+        "x264enc", "tune=zerolatency", "speed-preset=ultrafast",
+        "key-int-max=15", "bitrate=1500", "!",
+        "video/x-h264,profile=baseline", "!",
+        "rtph264pay", "config-interval=1", "pt=96", "!",
+        "udpsink", f"host={host}", f"port={port}",
+    ]
 
 
 def pipeline(pattern: str, label: str, host: str, port: int) -> list[str]:
@@ -93,8 +116,12 @@ class Handler(socketserver.StreamRequestHandler):
                         "Session: 12345678",
                     ]
                 elif method == "PLAY":
-                    pattern, label = CAMERAS.get(path, CAMERAS["cam1"])
-                    streams.append(subprocess.Popen(pipeline(pattern, label, client, client_port)))
+                    if path == "cam4" and IMAGE:
+                        command = image_pipeline(IMAGE, client, client_port)
+                    else:
+                        pattern, label = CAMERAS.get(path, CAMERAS["cam1"])
+                        command = pipeline(pattern, label, client, client_port)
+                    streams.append(subprocess.Popen(command))
                     extra = ["Session: 12345678", "Range: npt=0.000-"]
                 elif method == "OPTIONS":
                     extra = ["Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN"]
@@ -124,9 +151,11 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8554)
+    ap.add_argument("--image", help="foto JPEG servida, parada, em /cam4")
     args = ap.parse_args()
+    IMAGE = args.image
     with Server((args.host, args.port), Handler) as server:
-        print(f"RTSP falso em rtsp://{args.host}:{args.port}/cam1 .. cam3  (Ctrl+C sai)", flush=True)
+        print(f"RTSP falso em rtsp://{args.host}:{args.port}/cam1 .. cam3{'  e cam4 (foto)' if IMAGE else ''}  (Ctrl+C sai)", flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

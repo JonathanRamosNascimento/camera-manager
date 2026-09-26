@@ -88,6 +88,20 @@ impl Notifier {
         self.app.send_notification(None, &notification);
     }
 
+    /// Objetos identificados pela detecção de imagem (pessoa, cachorro, …).
+    pub fn detected(&self, name: &str, alerts: &[crate::detection::Alert]) {
+        let what = alerts
+            .iter()
+            .map(|alert| alert.label())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let notification = gio::Notification::new("Objeto detectado");
+        notification.set_body(Some(&format!("{name} — {what}")));
+        notification.set_priority(gio::NotificationPriority::Normal);
+        notification.set_icon(&gio::ThemedIcon::new(ICON_NAME));
+        self.app.send_notification(None, &notification);
+    }
+
     pub fn recording_failed(&self, name: &str, reason: &str) {
         if !self.enabled {
             return;

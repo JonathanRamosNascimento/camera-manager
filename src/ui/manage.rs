@@ -15,6 +15,7 @@ use gtk::{gio, glib};
 use super::{Dashboard, Slot};
 use crate::camera::Quality;
 use crate::config::{DEFAULT_URL_TEMPLATE, Secret};
+use crate::detection::{DetectionSettings, classes};
 use crate::discovery::{self, Found, ProbeResult, ScanEvent};
 use crate::reconnect::CameraState;
 use crate::store::{ChannelEntry, DEFAULT_RTSP_PORT, Device, parse_channels};
@@ -474,16 +475,31 @@ pub(super) fn show_edit_camera(dash: &Rc<Dashboard>, id: usize) {
     buttons.append(&cancel);
     buttons.append(&save);
 
-    let root = content_box(10);
+    // Com a lista de classes o formulário fica alto: rola, e os botões ficam
+    // sempre à vista embaixo.
+    let form = content_box(10);
     for widget in [
         grid.upcast_ref::<gtk::Widget>(),
         shared_note.upcast_ref(),
         advanced.upcast_ref(),
         status.upcast_ref(),
-        buttons.upcast_ref(),
     ] {
-        root.append(widget);
+        form.append(widget);
     }
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_height(true)
+        .max_content_height(560)
+        .child(&form)
+        .build();
+    buttons.set_margin_start(16);
+    buttons.set_margin_end(16);
+    buttons.set_margin_bottom(16);
+    let root = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .build();
+    root.append(&scroller);
+    root.append(&buttons);
     window.set_child(Some(&root));
 
     {
@@ -544,6 +560,231 @@ pub(super) fn show_edit_camera(dash: &Rc<Dashboard>, id: usize) {
     }
     window.present();
     name.grab_focus();
+}
+
+// ---------------------------------------------------------------------------
+// Identificação de objetos
+// ---------------------------------------------------------------------------
+
+/// Formulário da tela de identificação de objetos: liga/desliga, confiança
+/// mínima e a lista das 80 classes.
+struct DetectionForm {
+    root: gtk::Box,
+    /// Confiança padrão global (0.0–1.0): valor igual a ela não é gravado.
+    default_confidence: f32,
+    enabled: gtk::Switch,
+    confidence: gtk::Scale,
+    /// `(id da classe, caixa de seleção)`, na ordem em que aparecem.
+    checks: Vec<(usize, gtk::CheckButton)>,
+}
+
+impl DetectionForm {
+    fn new(current: &DetectionSettings, default_confidence: f32) -> Self {
+        let mask = current.class_mask();
+
+        let enabled = gtk::Switch::builder()
+            .active(current.enabled)
+            .valign(gtk::Align::Center)
+            .build();
+        let enabled_row = gtk::Box::builder().spacing(12).build();
+        let enabled_text = label("Identificar objetos nesta câmera", &[]);
+        enabled_text.set_hexpand(true);
+        enabled_text.set_xalign(0.0);
+        enabled_row.append(&enabled_text);
+        enabled_row.append(&enabled);
+
+        let start = current
+            .confidence
+            .map_or(f64::from(default_confidence) * 100.0, f64::from);
+        let confidence = gtk::Scale::with_range(gtk::Orientation::Horizontal, 5.0, 95.0, 5.0);
+        confidence.set_value(start.clamp(5.0, 95.0));
+        confidence.set_hexpand(true);
+        confidence.set_draw_value(true);
+        confidence.set_value_pos(gtk::PositionType::Right);
+        confidence.set_format_value_func(|_, value| format!("{value:.0}%"));
+        let confidence_row = gtk::Box::builder().spacing(12).build();
+        let confidence_text = label("Confiança mínima", &[]);
+        confidence_text.set_tooltip_text(Some(
+            "Menor = acha mais coisas, mas erra mais. Maior = só mostra o que tem certeza.",
+        ));
+        confidence_row.append(&confidence_text);
+        confidence_row.append(&confidence);
+
+        // As mais usadas no topo; o resto em ordem alfabética.
+        let mut order: Vec<usize> = classes::COMMON
+            .iter()
+            .filter_map(|name| classes::id_of(name))
+            .collect();
+        let mut rest: Vec<usize> = (0..classes::COUNT)
+            .filter(|id| !order.contains(id))
+            .collect();
+        rest.sort_by_key(|&id| classes::pt(id));
+        order.extend(rest);
+
+        let flow = gtk::FlowBox::builder()
+            .selection_mode(gtk::SelectionMode::None)
+            .min_children_per_line(2)
+            .max_children_per_line(3)
+            .homogeneous(true)
+            .row_spacing(2)
+            .column_spacing(8)
+            .build();
+        let checks: Vec<(usize, gtk::CheckButton)> = order
+            .into_iter()
+            .map(|id| {
+                let check = gtk::CheckButton::with_label(classes::pt(id));
+                check.set_active(mask[id]);
+                flow.append(&check);
+                (id, check)
+            })
+            .collect();
+        let scroller = gtk::ScrolledWindow::builder()
+            .min_content_height(190)
+            .max_content_height(190)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .child(&flow)
+            .build();
+        scroller.add_css_class("card");
+
+        let all = gtk::Button::with_label("Marcar todas");
+        let none = gtk::Button::with_label("Limpar");
+        for (button, on) in [(&all, true), (&none, false)] {
+            let checks: Vec<gtk::CheckButton> = checks.iter().map(|(_, c)| c.clone()).collect();
+            button.connect_clicked(move |_| checks.iter().for_each(|c| c.set_active(on)));
+        }
+        let bulk = gtk::Box::builder().spacing(8).build();
+        bulk.append(&label("O que reconhecer", &["heading"]));
+        let spacer = gtk::Box::builder().hexpand(true).build();
+        bulk.append(&spacer);
+        bulk.append(&all);
+        bulk.append(&none);
+
+        let hint = label(
+            "Roda um modelo YOLO no seu computador e custa CPU: ligue só nas câmeras \
+             que precisam. Ligar ou desligar reinicia a conexão desta câmera; mudar \
+             classes e confiança vale na hora.",
+            &["dim-label", "caption"],
+        );
+        hint.set_wrap(true);
+        hint.set_xalign(0.0);
+
+        let root = content_box(10);
+        for widget in [
+            enabled_row.upcast_ref::<gtk::Widget>(),
+            confidence_row.upcast_ref(),
+            bulk.upcast_ref(),
+            scroller.upcast_ref(),
+            hint.upcast_ref(),
+        ] {
+            root.append(widget);
+        }
+
+        Self {
+            root,
+            default_confidence,
+            enabled,
+            confidence,
+            checks,
+        }
+    }
+
+    fn widget(&self) -> &gtk::Box {
+        &self.root
+    }
+
+    /// Lê o formulário. `Err` traz o motivo, para mostrar no diálogo.
+    fn read(&self) -> Result<DetectionSettings, &'static str> {
+        let mut chosen: Vec<usize> = self
+            .checks
+            .iter()
+            .filter(|(_, check)| check.is_active())
+            .map(|&(id, _)| id)
+            .collect();
+        chosen.sort_unstable();
+
+        let enabled = self.enabled.is_active();
+        if enabled && chosen.is_empty() {
+            return Err("Identificação de objetos: marque ao menos uma classe.");
+        }
+        Ok(DetectionSettings {
+            enabled,
+            classes: chosen
+                .into_iter()
+                .map(|id| classes::en(id).to_string())
+                .collect(),
+            // Igual ao padrão global = sem valor próprio, para que mudar o padrão
+            // em `[detection]` continue valendo para esta câmera.
+            confidence: Some(self.confidence.value().round() as u8)
+                .filter(|&pct| pct != (self.default_confidence * 100.0).round() as u8),
+        })
+    }
+}
+
+/// Tela de identificação de objetos de uma câmera (o botão de olho do card).
+pub(super) fn show_detection(dash: &Rc<Dashboard>, id: usize) {
+    let Some(slot) = dash.slot(id) else {
+        return;
+    };
+    let window = dialog(
+        dash,
+        &format!("Identificação de objetos — {}", slot.name.borrow()),
+        520,
+        -1,
+        true,
+    );
+    let form = DetectionForm::new(
+        &dash.stored_detection(&slot),
+        dash.config.detection.confidence,
+    );
+    let status = label("", &["error-text"]);
+
+    let cancel = gtk::Button::with_label("Cancelar");
+    let save = gtk::Button::with_label("Salvar");
+    save.add_css_class("suggested-action");
+    window.set_default_widget(Some(&save));
+    let buttons = gtk::Box::builder()
+        .spacing(8)
+        .halign(gtk::Align::End)
+        .margin_start(16)
+        .margin_end(16)
+        .margin_bottom(16)
+        .build();
+    buttons.append(&cancel);
+    buttons.append(&save);
+    form.widget().append(&status);
+
+    let root = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .build();
+    root.append(form.widget());
+    root.append(&buttons);
+    window.set_child(Some(&root));
+
+    {
+        let window = window.downgrade();
+        cancel.connect_clicked(move |_| {
+            if let Some(window) = window.upgrade() {
+                window.close();
+            }
+        });
+    }
+    {
+        let dash = Rc::downgrade(dash);
+        let window = window.downgrade();
+        save.connect_clicked(move |_| {
+            let Some(dash) = dash.upgrade() else { return };
+            match form.read() {
+                Ok(settings) => {
+                    if let Some(window) = window.upgrade() {
+                        window.close();
+                    }
+                    dash.set_detection(id, settings);
+                }
+                Err(reason) => status.set_label(reason),
+            }
+        });
+    }
+    window.present();
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +850,7 @@ impl Form {
             channel: 1,
             name: String::new(),
             stream: 0,
+            detection: Default::default(),
         });
         probe.validate()?;
         Ok(device)
@@ -629,6 +871,7 @@ impl Form {
                 channel,
                 name: channel_name(&base, channel, total),
                 stream: 0,
+                detection: Default::default(),
             })
             .collect();
         device.name = base;
