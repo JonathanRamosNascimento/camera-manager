@@ -48,8 +48,10 @@ package() {
     install -Dm755 "$srcdir/target/release/camera-manager" "$pkgdir/usr/bin/camera-manager"
     install -Dm644 packaging/io.github.cameramanager.CameraManager.desktop \
         "$pkgdir/usr/share/applications/io.github.cameramanager.CameraManager.desktop"
-    install -Dm644 packaging/io.github.cameramanager.CameraManager.svg \
-        "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.cameramanager.CameraManager.svg"
+    for size in 16 24 32 48 64 128 256; do
+        install -Dm644 "packaging/icons/$size.png" \
+            "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/io.github.cameramanager.CameraManager.png"
+    done
     install -Dm644 config/cameras.example.toml \
         "$pkgdir/usr/share/camera-manager/cameras.example.toml"
     install -Dm644 packaging/arch/70-camera-manager-npu.rules \

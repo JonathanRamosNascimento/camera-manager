@@ -36,7 +36,10 @@ cargo build --release
 # --- árvore do pacote ------------------------------------------------------------
 install -Dm755 "target/release/$NAME" "$STAGE$LIBDIR/$NAME"
 install -Dm644 "packaging/$APP_ID.desktop" "$STAGE/usr/share/applications/$APP_ID.desktop"
-install -Dm644 "packaging/$APP_ID.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/$APP_ID.svg"
+for size in 16 24 32 48 64 128 256; do
+    install -Dm644 "packaging/icons/$size.png" \
+        "$STAGE/usr/share/icons/hicolor/${size}x${size}/apps/$APP_ID.png"
+done
 install -Dm644 config/cameras.example.toml "$STAGE/usr/share/$NAME/cameras.example.toml"
 install -Dm644 README.md "$STAGE/usr/share/doc/$NAME/README.md"
 

@@ -79,22 +79,31 @@ cp -R "$BREW/share/glib-2.0/schemas" "$RES/share/glib-2.0/"
 for theme in Adwaita hicolor; do
     [ -d "$BREW/share/icons/$theme" ] && cp -R "$BREW/share/icons/$theme" "$RES/share/icons/"
 done
-install -Dm644 packaging/io.github.cameramanager.CameraManager.svg \
-    "$RES/share/icons/hicolor/scalable/apps/io.github.cameramanager.CameraManager.svg"
+for size in 16 24 32 48 64 128 256; do
+    install -Dm644 "packaging/icons/$size.png" \
+        "$RES/share/icons/hicolor/${size}x${size}/apps/io.github.cameramanager.CameraManager.png"
+done
 install -Dm644 config/cameras.example.toml "$RES/cameras.example.toml"
 
 echo "==> Ícone e Info.plist"
 MINOS="$(sw_vers -productVersion | cut -d. -f1).0"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@MINOS@/$MINOS/g" packaging/macos/Info.plist.in \
     > "$APP/Contents/Info.plist"
+# Cada tamanho até 256 já vem pronto (packaging/icons/, extraído do icone.ico); só o
+# 512/1024 (Retina do Dock/Finder) precisa de upscale, feito pelo `sips` do próprio
+# macOS, já que a fonte não passa de 256×256.
 ICONSET="$(mktemp -d)/AppIcon.iconset"
 mkdir -p "$ICONSET"
-for size in 16 32 64 128 256 512; do
-    rsvg-convert -w "$size" -h "$size" packaging/io.github.cameramanager.CameraManager.svg \
-        -o "$ICONSET/icon_${size}x${size}.png"
-    rsvg-convert -w "$((size * 2))" -h "$((size * 2))" packaging/io.github.cameramanager.CameraManager.svg \
-        -o "$ICONSET/icon_${size}x${size}@2x.png"
-done
+cp packaging/icons/16.png  "$ICONSET/icon_16x16.png"
+cp packaging/icons/32.png  "$ICONSET/icon_16x16@2x.png"
+cp packaging/icons/32.png  "$ICONSET/icon_32x32.png"
+cp packaging/icons/64.png  "$ICONSET/icon_32x32@2x.png"
+cp packaging/icons/128.png "$ICONSET/icon_128x128.png"
+cp packaging/icons/256.png "$ICONSET/icon_128x128@2x.png"
+cp packaging/icons/256.png "$ICONSET/icon_256x256.png"
+sips -z 512 512 packaging/icons/256.png --out "$ICONSET/icon_256x256@2x.png" >/dev/null
+sips -z 512 512 packaging/icons/256.png --out "$ICONSET/icon_512x512.png" >/dev/null
+sips -z 1024 1024 packaging/icons/256.png --out "$ICONSET/icon_512x512@2x.png" >/dev/null
 iconutil -c icns "$ICONSET" -o "$RES/AppIcon.icns"
 
 echo "==> Assinatura"

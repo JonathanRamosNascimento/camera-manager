@@ -11,11 +11,21 @@
 #   GTK4_PLUGIN_DLL=/caminho/gstgtk4.dll tools/package-windows.sh
 #
 # Variáveis:
-#   GTK4_PLUGIN_DLL  (obrigatória) gstgtk4.dll do gst-plugins-rs
-#   ISCC             caminho do ISCC.exe do Inno Setup (padrão: procura no PATH e em
-#                    "C:\Program Files (x86)\Inno Setup 6")
+#   GTK4_PLUGIN_DLL     (obrigatória) gstgtk4.dll do gst-plugins-rs
+#   ISCC                caminho do ISCC.exe do Inno Setup (padrão: procura no PATH e em
+#                       "C:\Program Files (x86)\Inno Setup 6")
+#   OPENVINO_RUNTIME_DIR (opcional) pasta onde foi extraído o runtime do OpenVINO para
+#                       Windows (o .zip "w_openvino_toolkit_windows..." de
+#                       https://docs.openvino.ai/, baixado à parte — não vem com o
+#                       MSYS2). É a pasta que contém `runtime\`, não o zip. Sem essa
+#                       variável, o pacote sai igual, só que sem acelerar por NPU/GPU
+#                       Intel (sempre CPU via tract).
 #
 # O app se autoconfigura ao achar `lib/gstreamer-1.0` ao lado do .exe (src/bundle.rs).
+# Se houver também uma pasta `openvino/`, ele aponta `INTEL_OPENVINO_DIR` pra ela.
+#
+# O ícone (icone.ico, na raiz do repo) é embutido no .exe pelo build.rs (windres, do
+# mingw-w64-x86_64-toolchain) e reaproveitado pelo instalador (Inno Setup).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -60,11 +70,38 @@ mkdir -p "$DIST/share/icons"
 for theme in Adwaita hicolor; do
     [ -d "$PREFIX/share/icons/$theme" ] && cp -r "$PREFIX/share/icons/$theme" "$DIST/share/icons/"
 done
-install -Dm644 "packaging/io.github.cameramanager.CameraManager.svg" \
-    "$DIST/share/icons/hicolor/scalable/apps/io.github.cameramanager.CameraManager.svg"
+for size in 16 24 32 48 64 128 256; do
+    install -Dm644 "packaging/icons/$size.png" \
+        "$DIST/share/icons/hicolor/${size}x${size}/apps/io.github.cameramanager.CameraManager.png"
+done
 [ -d "$PREFIX/lib/gdk-pixbuf-2.0" ] && cp -r "$PREFIX/lib/gdk-pixbuf-2.0" "$DIST/lib/"
 install -Dm644 config/cameras.example.toml "$DIST/cameras.example.toml"
 install -Dm644 README.md "$DIST/README.md"
+install -Dm644 icone.ico "$DIST/icone.ico"
+
+if [ -n "${OPENVINO_RUNTIME_DIR:-}" ]; then
+    echo "==> OpenVINO (NPU/GPU Intel)"
+    [ -d "$OPENVINO_RUNTIME_DIR/runtime" ] || {
+        echo "OPENVINO_RUNTIME_DIR não tem uma pasta runtime/ dentro: $OPENVINO_RUNTIME_DIR" >&2
+        exit 1
+    }
+    OV_DIST="$DIST/openvino"
+    # Só as subpastas que o openvino-finder (crate) procura via INTEL_OPENVINO_DIR;
+    # o resto do runtime (headers, samples, python...) não serve pro app empacotado.
+    for sub in runtime/bin/intel64/Release runtime/3rdparty/tbb/bin; do
+        if [ -d "$OPENVINO_RUNTIME_DIR/$sub" ]; then
+            mkdir -p "$OV_DIST/$sub"
+            cp -r "$OPENVINO_RUNTIME_DIR/$sub/." "$OV_DIST/$sub/"
+        fi
+    done
+    [ -d "$OV_DIST/runtime/bin/intel64/Release" ] || {
+        echo "não achei runtime/bin/intel64/Release em $OPENVINO_RUNTIME_DIR (layout inesperado?)" >&2
+        exit 1
+    }
+    [ -d "$OPENVINO_RUNTIME_DIR/licensing" ] && cp -r "$OPENVINO_RUNTIME_DIR/licensing" "$OV_DIST/"
+else
+    echo "AVISO: OPENVINO_RUNTIME_DIR não definido; pacote sairá sem NPU/GPU (sempre CPU)." >&2
+fi
 
 echo "==> ZIP portátil"
 ( cd "$OUT" && rm -f "$NAME-$VERSION-windows-x64.zip" && zip -qr "$NAME-$VERSION-windows-x64.zip" "$(basename "$DIST")" )

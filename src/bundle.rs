@@ -13,7 +13,15 @@
 //! lib/gstreamer-1.0/      Contents/Resources/lib/gstreamer-1.0/
 //! libexec/gstreamer-1.0/  Contents/Resources/libexec/gstreamer-1.0/
 //! share/glib-2.0/schemas  Contents/Resources/share/glib-2.0/schemas
+//! openvino/runtime/…      Contents/Resources/openvino/runtime/…
 //! ```
+//!
+//! A pasta `openvino/` é opcional e independente do GStreamer: se existir, aponta
+//! `INTEL_OPENVINO_DIR` para ela (a mesma variável que o instalador oficial da Intel
+//! define via `setupvars`), e o crate `openvino` (via `openvino-finder`) acha a
+//! biblioteca sozinho dentro de `runtime/bin/intel64/Release`. Sem essa pasta, nada
+//! muda: o OpenVINO só é achado se já estiver instalado no sistema (ou nem é achado,
+//! e tudo cai na CPU).
 //!
 //! Instalação normal (Linux, ou o Homebrew/MSYS2 do desenvolvedor) não tem essa
 //! pasta, então nada muda: valem os caminhos do sistema.
@@ -86,6 +94,11 @@ pub fn env_for(
         if let Ok(joined) = std::env::join_paths(dirs) {
             vars.push(("XDG_DATA_DIRS", joined));
         }
+    }
+
+    let openvino = root.join("openvino");
+    if openvino.is_dir() {
+        vars.push(("INTEL_OPENVINO_DIR", openvino.into()));
     }
     vars
 }
@@ -188,6 +201,26 @@ mod tests {
         let parts: Vec<PathBuf> = std::env::split_paths(&data_dirs).collect();
         assert_eq!(parts[0], dir.join("share"));
         assert!(parts.contains(&PathBuf::from("/usr/share")));
+    }
+
+    #[test]
+    fn openvino_entra_so_quando_a_pasta_existe() {
+        let get = |vars: &[(&str, OsString)]| {
+            vars.iter()
+                .find(|(k, _)| *k == "INTEL_OPENVINO_DIR")
+                .map(|(_, v)| v.clone())
+        };
+
+        let dir = tempdir("openvino-ausente");
+        fs::create_dir_all(dir.join("lib/gstreamer-1.0")).unwrap();
+        let vars = env_for(&dir, &dir.join("r.bin"), None);
+        assert_eq!(get(&vars), None);
+
+        let dir = tempdir("openvino-presente");
+        fs::create_dir_all(dir.join("lib/gstreamer-1.0")).unwrap();
+        fs::create_dir_all(dir.join("openvino/runtime/bin/intel64/Release")).unwrap();
+        let vars = env_for(&dir, &dir.join("r.bin"), None);
+        assert_eq!(get(&vars), Some(dir.join("openvino").into()));
     }
 
     #[test]

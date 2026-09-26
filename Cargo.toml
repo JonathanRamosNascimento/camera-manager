@@ -30,3 +30,7 @@ ureq = "3.4.2"
 # Ícone de bandeja (StatusNotifierItem/D-Bus): só existe no Linux.
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = "0.3.6"
+
+# Embute icone.ico no .exe (build.rs); usa windres do mingw-w64-toolchain.
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = "0.1"

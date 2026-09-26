@@ -12,6 +12,7 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
+SetupIconFile={#SourceDir}\icone.ico
 UninstallDisplayIcon={app}\{#AppExe}
 OutputDir={#OutputDir}
 OutputBaseFilename=camera-manager-{#AppVersion}-windows-x64-setup

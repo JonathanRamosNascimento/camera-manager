@@ -10,6 +10,10 @@ gravação sob demanda, áudio, detecção de movimento, **identificação de ob
 **Roda em Linux, Windows e macOS**, com instaladores para cada um — veja
 [Instalação](#instalação).
 
+**[⬇ Baixar a versão mais recente](https://github.com/JonathanRamosNascimento/camera-manager/releases/tag/latest)**
+(`.deb`, `.exe`/`.zip` do Windows, `.dmg` do macOS) — gerada automaticamente a cada
+push na `master`, veja os detalhes e limitações em [Instalação](#instalação).
+
 ![Grid com três câmeras ao vivo](docs/screenshot.png)
 
 _Imagens deste README usam vídeo sintético (padrões de teste do GStreamer
@@ -383,6 +387,20 @@ Os pacotes de Windows e macOS levam o GTK4 e o GStreamer **dentro** (a pasta tem
 algumas centenas de MB). O app se autoconfigura ao achar `lib/gstreamer-1.0` ao lado
 do executável (`src/bundle.rs`), sem script de lançamento.
 
+**OpenVINO embutido no Windows (opcional):** para o instalador já sair com suporte a
+NPU/GPU Intel sem o usuário instalar nada, defina `OPENVINO_RUNTIME_DIR` apontando para a
+pasta onde você extraiu o runtime Windows do OpenVINO (baixado à parte, em
+[docs.openvino.ai](https://docs.openvino.ai/) — não vem pelo MSYS2/pacman):
+
+```sh
+OPENVINO_RUNTIME_DIR=/c/openvino/w_openvino_toolkit_windows_2024.x.y \
+GTK4_PLUGIN_DLL=… tools/package-windows.sh
+```
+
+Sem essa variável o pacote sai igual, só que a identificação de objetos sempre roda na
+CPU (como hoje). Veja [Usar a NPU Intel](#usar-a-npu-intel-opcional) para o restante do
+setup no Windows (driver da NPU).
+
 ---
 
 ## Configuração
@@ -659,9 +677,15 @@ Por padrão a identificação de objetos roda na **CPU**. Em computadores com **
 quadro contra ~148 ms na CPU**, com as mesmas detecções, e a CPU fica livre. Se você não tem
 NPU, ignore esta seção: nada muda.
 
-A NPU é acessada pelo **OpenVINO**, que o app carrega em tempo de execução. Ele **não vem
-junto** com o app e não é preciso para compilar nem para rodar; sem ele tudo continua na CPU.
-Para usar a NPU, faça os passos abaixo **uma vez**.
+A NPU é acessada pelo **OpenVINO**, que o app carrega em tempo de execução. No Linux ele
+**não vem junto** com o app (nem é preciso para compilar ou rodar; sem ele tudo continua na
+CPU); no Windows, se o instalador foi gerado com `OPENVINO_RUNTIME_DIR` definido (veja
+[Gerando os instaladores](#gerando-os-instaladores)), ele **já vem embutido** e não precisa
+instalar nada — pule direto para o [passo 4](#4-confira).
+
+#### Linux
+
+Faça os passos abaixo **uma vez**.
 
 **1. Confirme que existe uma NPU**
 
@@ -702,7 +726,28 @@ O `/dev/accel/accel0` é do grupo `render`. Sem acesso a ele, o OpenVINO enxerga
   pelo ícone do desktop nascem sob o `systemd --user`, que mantém os grupos antigos enquanto
   houver qualquer sessão sua aberta.
 
-**4. Confira**
+#### Windows
+
+**Não testei numa máquina Windows de verdade** (desenvolvo no Linux); os passos abaixo são os
+esperados pela integração com o OpenVINO, mas trate como "deveria funcionar", não garantido.
+
+1. **Confirme que existe uma NPU:** Gerenciador de Dispositivos → categoria *Processadores
+   neurais* (ou `Get-PnpDevice -Class Neural -Status OK` no PowerShell). Só existe em Intel
+   Core Ultra (séries 1 e 2).
+2. **Driver da NPU:** normalmente já vem pelo Windows Update; se não aparecer no Gerenciador
+   de Dispositivos, baixe pelo [Intel Driver & Support Assistant](https://www.intel.com/content/www/us/en/support/detect.html)
+   ou diretamente da página de drivers do seu modelo de notebook/placa.
+3. **OpenVINO:** o instalador oficial (`…-windows-x64-setup.exe`) já traz o OpenVINO
+   embutido **se** quem gerou o pacote definiu `OPENVINO_RUNTIME_DIR` (veja
+   [Gerando os instaladores](#gerando-os-instaladores)) — não precisa instalar nada à parte,
+   e não existe o equivalente ao passo 3 do Linux (não há grupo/permissão de dispositivo no
+   Windows). Se o seu pacote não tiver a pasta `openvino\` ao lado do `.exe`, ele não foi
+   gerado com o OpenVINO embutido; baixe o runtime Windows em
+   [docs.openvino.ai](https://docs.openvino.ai/) e copie manualmente o conteúdo de
+   `runtime\bin\intel64\Release` para dentro de `openvino\runtime\bin\intel64\Release`, ao
+   lado do `camera-manager.exe`.
+
+#### 4. Confira
 
 ```sh
 camera-manager --check
@@ -729,10 +774,11 @@ permissão, modelo que ela não compila) volta para a CPU. GPUs NVIDIA/AMD não 
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
-| `--check` mostra `OpenVINO vê CPU` e "Atenção: … sem permissão" | falta acesso a `/dev/accel/accel0` | passo 3 |
-| `--check` mostra "Atenção: há uma NPU, mas o OpenVINO não está instalado" | falta o OpenVINO | passo 2 |
-| `--check` vê a NPU, mas o app aberto **pelo ícone** mostra CPU (e pelo terminal, NPU) | o `systemd --user` ainda tem os grupos antigos | reinicie o computador |
-| `--check` vê só CPU e nada de "Atenção" | driver da NPU não carregou | passo 1; confira `dmesg \| grep -i vpu` |
+| `--check` mostra `OpenVINO vê CPU` e "Atenção: … sem permissão" | (Linux) falta acesso a `/dev/accel/accel0` | passo 3 do Linux |
+| `--check` mostra "Atenção: há uma NPU, mas o OpenVINO não está instalado" | falta o OpenVINO | passo 2 (Linux) ou passo 3 (Windows) |
+| `--check` vê a NPU, mas o app aberto **pelo ícone** mostra CPU (e pelo terminal, NPU) | (Linux) `systemd --user` ainda tem os grupos antigos | reinicie o computador |
+| `--check` vê só CPU e nada de "Atenção" | driver da NPU não carregou | Linux: passo 1, confira `dmesg \| grep -i vpu`. Windows: confira o driver no Gerenciador de Dispositivos |
+| (Windows) pacote não tem pasta `openvino\` ao lado do `.exe` | gerado sem `OPENVINO_RUNTIME_DIR` | veja passo 3 do Windows, ou gere de novo o pacote com a variável definida |
 | Log: "não consegui usar o dispositivo pedido" | o OpenVINO leu o modelo, mas a NPU não o compilou | o motivo vem no log; o app já está na CPU |
 
 O `--check` também pode imprimir um bloco `hwloc received invalid information`, comum em
@@ -797,7 +843,10 @@ packaging/
 ├── arch/PKGBUILD                     pacote do Arch
 ├── windows/camera-manager.iss         script do instalador (Inno Setup)
 ├── macos/Info.plist.in               Info.plist do .app
-└── io.github.cameramanager.*          .desktop e ícone (Linux)
+├── io.github.cameramanager.*.desktop  atalho (Linux)
+└── icons/{16,24,32,48,64,128,256}.png ícone do app, extraído de icone.ico, em cada
+                                       tamanho do tema hicolor (Linux/Windows/macOS)
+build.rs                              embute icone.ico (raiz do repo) no .exe do Windows
 .github/workflows/build.yml           CI: testes e instaladores de todos os sistemas
 ```
 
