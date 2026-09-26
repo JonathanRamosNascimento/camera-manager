@@ -17,16 +17,46 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use tract_onnx::prelude::*;
 
-use super::{Detection, classes};
+use super::{Detection, classes, ov};
 
 /// Cor de preenchimento do letterbox (a mesma do treino do Ultralytics).
 const PAD_VALUE: f32 = 114.0 / 255.0;
 
 type Plan = Arc<TypedRunnableModel>;
 
+/// Onde o usuário quer rodar o modelo (`[detection].device`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DevicePref {
+    /// NPU se houver (e o OpenVINO estiver instalado); senão CPU.
+    Auto,
+    Cpu,
+    Npu,
+    Gpu,
+}
+
+impl DevicePref {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "cpu" => Some(Self::Cpu),
+            "npu" => Some(Self::Npu),
+            "gpu" => Some(Self::Gpu),
+            _ => None,
+        }
+    }
+}
+
+enum Runner {
+    Tract(Plan),
+    OpenVino(ov::Backend),
+}
+
+/// Modelo carregado, compartilhado pelas threads de inferência. Cada thread
+/// pega o seu [`Session`].
 pub struct Model {
-    plan: Plan,
+    runner: Runner,
     size: usize,
+    device: String,
 }
 
 /// O que a decodificação precisa saber além do tensor.
@@ -41,8 +71,50 @@ pub struct Params<'a> {
 }
 
 impl Model {
-    /// Carrega e otimiza o modelo para a entrada quadrada `size`×`size`.
-    pub fn load(path: &Path, size: usize) -> Result<Self> {
+    /// Carrega o modelo para a entrada quadrada `size`×`size`.
+    ///
+    /// Com `Auto`, `Npu` ou `Gpu` tenta primeiro o OpenVINO e só o aceita se
+    /// um quadro de teste passar de ponta a ponta nele; qualquer falha (sem
+    /// biblioteca, sem dispositivo, modelo que o dispositivo não compila) cai
+    /// na CPU. Só `Auto` trata isso como normal: nos outros o motivo vai para o
+    /// log como aviso, já que o usuário pediu aquele dispositivo.
+    pub fn load(path: &Path, size: usize, pref: DevicePref) -> Result<Self> {
+        if pref != DevicePref::Cpu {
+            match Self::load_openvino(path, size, pref) {
+                Ok(model) => return Ok(model),
+                // Sem NPU na máquina, cair na CPU é o normal; com NPU, o usuário
+                // quer saber por que ela não foi usada.
+                Err(err) if pref == DevicePref::Auto && !ov::npu_present() => {
+                    tracing::info!(motivo = %format!("{err:#}"), "sem aceleração por NPU; usando a CPU");
+                }
+                Err(err) if pref == DevicePref::Auto => {
+                    tracing::warn!(motivo = %format!("{err:#}"), "há uma NPU, mas não consegui usá-la; usando a CPU");
+                }
+                Err(err) => {
+                    tracing::warn!(motivo = %format!("{err:#}"), "não consegui usar o dispositivo pedido; usando a CPU");
+                }
+            }
+        }
+        let model = Self::load_tract(path, size)?;
+        model.warm_up()?;
+        Ok(model)
+    }
+
+    fn load_openvino(path: &Path, size: usize, pref: DevicePref) -> Result<Self> {
+        let backend = ov::Backend::load(path, size, pref)?;
+        let device = backend.label().to_string();
+        let model = Self {
+            runner: Runner::OpenVino(backend),
+            size,
+            device,
+        };
+        model
+            .warm_up()
+            .with_context(|| format!("o modelo não rodou em {}", model.device))?;
+        Ok(model)
+    }
+
+    fn load_tract(path: &Path, size: usize) -> Result<Self> {
         let plan = tract_onnx::onnx()
             .model_for_path(path)
             .with_context(|| format!("não consegui ler o modelo {}", path.display()))?
@@ -52,29 +124,72 @@ impl Model {
             .context("não consegui otimizar o modelo")?
             .into_runnable()
             .context("não consegui preparar o modelo")?;
-        Ok(Self { plan, size })
+        Ok(Self {
+            runner: Runner::Tract(plan),
+            size,
+            device: "CPU".to_string(),
+        })
     }
 
+    /// Nome do dispositivo em uso (`"CPU"`, `"NPU (Intel(R) AI Boost)"`…).
+    pub fn device(&self) -> &str {
+        &self.device
+    }
+
+    /// Um quadro preto de ponta a ponta: pega na hora um modelo com saída
+    /// incompatível, em vez de falhar só quando a primeira câmera mandar um quadro.
+    fn warm_up(&self) -> Result<()> {
+        let (width, height) = (self.size, self.size * 9 / 16);
+        self.session()?
+            .detect(
+                &vec![0u8; width * height * 3],
+                width,
+                height,
+                &Params {
+                    classes: &[true; classes::COUNT],
+                    min_confidence: 0.99,
+                    iou: 0.45,
+                },
+            )
+            .map(drop)
+    }
+
+    /// Contexto de execução de uma thread.
+    pub fn session(&self) -> Result<Session> {
+        let inner = match &self.runner {
+            Runner::Tract(plan) => SessionInner::Tract(Arc::clone(plan)),
+            Runner::OpenVino(backend) => SessionInner::OpenVino(backend.session()?),
+        };
+        Ok(Session {
+            inner,
+            size: self.size,
+        })
+    }
+}
+
+pub struct Session {
+    inner: SessionInner,
+    size: usize,
+}
+
+enum SessionInner {
+    Tract(Plan),
+    OpenVino(ov::Session),
+}
+
+impl Session {
     /// Detecta objetos num quadro RGB (`width * height * 3` bytes, sem padding).
     pub fn detect(
-        &self,
+        &mut self,
         rgb: &[u8],
         width: usize,
         height: usize,
         params: &Params,
     ) -> Result<Vec<Detection>> {
         let (input, lb) = letterbox(rgb, width, height, self.size);
-        let size = self.size;
-        let tensor = tract_ndarray::Array4::from_shape_vec((1, 3, size, size), input)
-            .context("tensor de entrada com forma inesperada")?;
-        let outputs = self
-            .plan
-            .run(tvec!(Tensor::from(tensor).into()))
-            .context("falha ao rodar o modelo")?;
-        let output = outputs.first().context("o modelo não devolveu saída")?;
+        let (shape, data) = self.run(input)?;
 
-        let shape = output.shape();
-        let (channels, anchors, channel_major) = match shape {
+        let (channels, anchors, channel_major) = match shape.as_slice() {
             [1, a, b] if a < b => (*a, *b, true),
             [1, a, b] => (*b, *a, false),
             other => bail!("saída do modelo com forma {other:?}; esperado [1, 84, N]"),
@@ -85,15 +200,33 @@ impl Model {
                 channels.saturating_sub(4)
             );
         }
-        let view = output
-            .to_plain_array_view::<f32>()
-            .context("saída do modelo não é f32")?;
-        let data = view
-            .as_slice()
-            .context("saída do modelo não está contígua na memória")?;
 
-        let candidates = decode(data, channels, anchors, channel_major, &lb, params);
+        let candidates = decode(&data, channels, anchors, channel_major, &lb, params);
         Ok(nms(candidates, params.iou))
+    }
+
+    /// Roda a rede: devolve a forma e os dados da saída.
+    fn run(&mut self, input: Vec<f32>) -> Result<(Vec<usize>, Vec<f32>)> {
+        match &mut self.inner {
+            SessionInner::Tract(plan) => {
+                let size = self.size;
+                let tensor = tract_ndarray::Array4::from_shape_vec((1, 3, size, size), input)
+                    .context("tensor de entrada com forma inesperada")?;
+                let outputs = plan
+                    .run(tvec!(Tensor::from(tensor).into()))
+                    .context("falha ao rodar o modelo")?;
+                let output = outputs.first().context("o modelo não devolveu saída")?;
+                let view = output
+                    .to_plain_array_view::<f32>()
+                    .context("saída do modelo não é f32")?;
+                let data = view
+                    .as_slice()
+                    .context("saída do modelo não está contígua na memória")?
+                    .to_vec();
+                Ok((output.shape().to_vec(), data))
+            }
+            SessionInner::OpenVino(session) => session.run(&input),
+        }
     }
 }
 
@@ -383,5 +516,52 @@ mod tests {
         assert_eq!(kept.len(), 3);
         assert_eq!(kept[0].score, 0.9);
         assert!(kept.iter().all(|d| d.score != 0.6));
+    }
+
+    /// Teste manual com o modelo de verdade — serve para conferir em que
+    /// dispositivo ele roda e quanto demora:
+    ///
+    /// ```sh
+    /// gst-launch-1.0 -q filesrc location=rua.jpg ! jpegdec ! videoconvert ! videoscale ! \
+    ///   video/x-raw,format=RGB,width=640,height=853,pixel-aspect-ratio=1/1 ! filesink location=rua.rgb
+    /// YOLO_MODEL=yolov8n.onnx YOLO_FRAME=rua.rgb YOLO_SIZE=640x853 YOLO_DEVICE=auto \
+    ///   cargo test --release dispositivo_real -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "precisa do modelo e de um quadro RGB (veja a documentação do teste)"]
+    fn dispositivo_real() {
+        let path = std::env::var("YOLO_MODEL").expect("YOLO_MODEL");
+        let frame = std::fs::read(std::env::var("YOLO_FRAME").expect("YOLO_FRAME")).unwrap();
+        let (w, h) = std::env::var("YOLO_SIZE")
+            .expect("YOLO_SIZE=LxA")
+            .split_once('x')
+            .map(|(w, h)| (w.parse::<usize>().unwrap(), h.parse::<usize>().unwrap()))
+            .unwrap();
+        let pref = DevicePref::parse(&std::env::var("YOLO_DEVICE").unwrap_or("auto".into()))
+            .expect("YOLO_DEVICE = auto|cpu|npu|gpu");
+
+        let t = std::time::Instant::now();
+        let model = Model::load(Path::new(&path), 640, pref).unwrap();
+        println!("dispositivo: {} (carga {:?})", model.device(), t.elapsed());
+
+        let mask = all_classes();
+        let mut session = model.session().unwrap();
+        let mut found = Vec::new();
+        let mut times = Vec::new();
+        for _ in 0..10 {
+            let t = std::time::Instant::now();
+            found = session.detect(&frame, w, h, &params(&mask, 0.45)).unwrap();
+            times.push(t.elapsed());
+        }
+        times.sort();
+        println!("por quadro: mediana {:?}, mínimo {:?}", times[5], times[0]);
+        for d in &found {
+            println!("  {} {:.0}%", classes::pt(d.class), d.score * 100.0);
+        }
+        assert!(
+            found.iter().filter(|d| d.class == 0).count() >= 2,
+            "pessoas"
+        );
+        assert!(found.iter().any(|d| d.class == 5), "ônibus");
     }
 }

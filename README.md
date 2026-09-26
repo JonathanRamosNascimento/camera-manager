@@ -102,7 +102,8 @@ Tudo isso é salvo entre execuções. Detalhes nas seções abaixo.
 - **Identificação de objetos (YOLO)**, ligada câmera por câmera: você escolhe quais das 80 classes
   reconhecer (pessoa, cachorro, gato, carro, moto…), com caixas sobre o vídeo, selo no card e
   notificação quando algo aparece — tudo rodando no seu computador, veja
-  [Identificação de objetos](#identificação-de-objetos)
+  [Identificação de objetos](#identificação-de-objetos) (com aceleração opcional por
+  [NPU Intel](#usar-a-npu-intel-opcional))
 - Notificações do desktop quando uma câmera cai e quando volta
 - Ícone na bandeja (StatusNotifierItem) com resumo e menu
 - Vários NVRs / câmeras IP no mesmo dashboard
@@ -520,6 +521,7 @@ Este bloco só guarda o que vale para todas:
 | `model_path` | `<config>/camera-manager/models/yolov8n.onnx` | Modelo YOLO em ONNX. `~` é expandido |
 | `model_url` | YOLOv8n fixado no código | De onde baixar o modelo se `model_path` não existir |
 | `model_sha256` | o do modelo padrão | SHA-256 esperado do download (64 dígitos hex). Com `model_url` próprio, sem isto não há verificação |
+| `device` | `"auto"` | Onde rodar o modelo: `auto` (NPU Intel se houver, senão CPU), `cpu`, `npu` ou `gpu`. Se o dispositivo faltar, cai na CPU |
 | `input_size` | `640` | Lado do quadrado de entrada do modelo; múltiplo de 32 (160–1280). Precisa bater com a exportação do `.onnx` |
 | `interval_ms` | `500` | Intervalo entre análises de uma câmera (500 = 2 quadros/s) |
 | `confidence` | `0.45` | Confiança mínima (0.01–0.99) das câmeras que não definem a própria |
@@ -642,10 +644,100 @@ pessoa parada na frente da câmera avisa uma vez, não a cada 30 s.
 rodam ao mesmo tempo, e o que passar disso é descartado (a detecção atrasa, o vídeo não).
 Para poupar CPU aumente `interval_ms`.
 
+**NPU:** em computadores com NPU Intel o app pode usá-la no lugar da CPU (~13× mais rápido
+no teste). Não é automático: veja [Usar a NPU Intel](#usar-a-npu-intel-opcional).
+
 **Outro modelo:** aponte `model_path` para qualquer YOLO **v8 ou v11** exportado para
 ONNX com as 80 classes COCO (`yolo export model=yolo11s.pt format=onnx`). Modelos maiores
 (`s`, `m`) acertam mais e custam proporcionalmente mais CPU. Se o `.onnx` foi exportado
 com outro tamanho de entrada, ajuste `input_size`.
+
+### Usar a NPU Intel (opcional)
+
+Por padrão a identificação de objetos roda na **CPU**. Em computadores com **NPU Intel**
+(Core Ultra, séries 1 e 2) ela pode rodar na NPU: no teste com o YOLOv8n foram **~11 ms por
+quadro contra ~148 ms na CPU**, com as mesmas detecções, e a CPU fica livre. Se você não tem
+NPU, ignore esta seção: nada muda.
+
+A NPU é acessada pelo **OpenVINO**, que o app carrega em tempo de execução. Ele **não vem
+junto** com o app e não é preciso para compilar nem para rodar; sem ele tudo continua na CPU.
+Para usar a NPU, faça os passos abaixo **uma vez**.
+
+**1. Confirme que existe uma NPU**
+
+```sh
+ls /dev/accel/          # deve listar accel0
+lspci | grep -i npu     # "Processing accelerators: Intel … NPU"
+```
+
+Sem `/dev/accel/accel0`, o kernel não carregou o driver (`intel_vpu`, incluído no Linux 6.x
+recentes) ou o computador não tem NPU.
+
+**2. Instale o OpenVINO e o plugin da NPU**
+
+- **Arch / CachyOS / Manjaro:**
+  ```sh
+  sudo pacman -S openvino openvino-intel-npu-plugin
+  ```
+  O plugin já puxa o driver (`intel-npu-driver`) e o compilador (`intel-npu-compiler`).
+- **Outras distros:** instale o OpenVINO (a biblioteca `libopenvino_c.so`) e o plugin/driver
+  de NPU pelo gerenciador da sua distro ou pelas
+  [instruções da Intel](https://docs.openvino.ai/). Não testei fora do Arch.
+
+**3. Dê acesso ao dispositivo**
+
+O `/dev/accel/accel0` é do grupo `render`. Sem acesso a ele, o OpenVINO enxerga só a CPU e
+**não dá erro nenhum**.
+
+- **Pacote do Arch (`makepkg -si`):** já resolve. Traz uma regra `udev` (`uaccess`, o mesmo
+  mecanismo das GPUs) que libera a NPU para quem está logado, sem grupo e sem relogar.
+- **Instalação a partir do código-fonte, ou outras distros:** copie
+  [`packaging/arch/70-camera-manager-npu.rules`](packaging/arch/70-camera-manager-npu.rules)
+  para `/usr/lib/udev/rules.d/` e rode `sudo udevadm control --reload && sudo udevadm trigger
+  --subsystem-match=accel --action=change`. Ou, alternativamente:
+  ```sh
+  sudo usermod -aG render $USER
+  ```
+  e **reinicie o computador**. Sair e entrar de novo na sessão pode não bastar: apps abertos
+  pelo ícone do desktop nascem sob o `systemd --user`, que mantém os grupos antigos enquanto
+  houver qualquer sessão sua aberta.
+
+**4. Confira**
+
+```sh
+camera-manager --check
+```
+
+A linha *Aceleração da identificação de objetos* deve dizer `OpenVINO vê CPU, NPU`. No app,
+abra o olho de uma câmera com a identificação ligada: a tela mostra **"Rodando em: NPU
+(Intel(R) AI Boost)"**. Essa linha só aparece depois que o modelo carrega, o que acontece
+quando uma câmera com identificação ligada sobe.
+
+**Configuração:** `[detection] device` no `cameras.toml` (veja
+[`[detection]`](#detection--ajustes-globais)):
+
+| Valor | Efeito |
+|---|---|
+| `"auto"` (padrão) | NPU se o OpenVINO enxergar uma; senão CPU |
+| `"cpu"` | sempre CPU (o `tract`, como sempre foi) |
+| `"npu"` / `"gpu"` | NPU ou GPU Intel; se não houver ou não funcionar, cai na CPU e explica no log |
+
+O app **nunca fica sem detecção** por causa disso: qualquer falha da NPU (sem biblioteca, sem
+permissão, modelo que ela não compila) volta para a CPU. GPUs NVIDIA/AMD não são usadas.
+
+**Não funcionou? (só aparece CPU)**
+
+| Sintoma | Causa provável | O que fazer |
+|---|---|---|
+| `--check` mostra `OpenVINO vê CPU` e "Atenção: … sem permissão" | falta acesso a `/dev/accel/accel0` | passo 3 |
+| `--check` mostra "Atenção: há uma NPU, mas o OpenVINO não está instalado" | falta o OpenVINO | passo 2 |
+| `--check` vê a NPU, mas o app aberto **pelo ícone** mostra CPU (e pelo terminal, NPU) | o `systemd --user` ainda tem os grupos antigos | reinicie o computador |
+| `--check` vê só CPU e nada de "Atenção" | driver da NPU não carregou | passo 1; confira `dmesg \| grep -i vpu` |
+| Log: "não consegui usar o dispositivo pedido" | o OpenVINO leu o modelo, mas a NPU não o compilou | o motivo vem no log; o app já está na CPU |
+
+O `--check` também pode imprimir um bloco `hwloc received invalid information`, comum em
+CPUs híbridas: é o oneTBB do OpenVINO reclamando da topologia que o kernel informa. É
+inofensivo (ele ignora e segue) e não afeta a detecção.
 
 ### Indicadores
 
@@ -679,7 +771,8 @@ src/
 ├── detection/      identificação de objetos (YOLO)
 │   ├── mod.rs        configuração por câmera, estado compartilhado, avisos
 │   ├── classes.rs    as 80 classes COCO (inglês + português)
-│   ├── yolo.rs       letterbox, inferência (tract), decodificação e NMS
+│   ├── yolo.rs       letterbox, escolha do backend (NPU → CPU), decodificação e NMS
+│   ├── ov.rs         backend OpenVINO (NPU/GPU Intel), carregado em tempo de execução
 │   └── engine.rs     baixa/verifica/carrega o modelo e roda a fila de análises
 ├── reconnect.rs    Supervisor por câmera: bus, watchdog, backoff, comandos
 ├── notify.rs       notificações do desktop e ícone na bandeja (ksni)
@@ -899,7 +992,7 @@ antes de concluir que a câmera está fora.
 - **Só modelos COCO de 80 classes** (YOLOv8/v11). YOLOv5 (com *objectness*) e modelos que já
   trazem NMS embutido (YOLOv10, exportações `nms=True`) não são suportados; modelos treinados
   com outras classes são recusados com uma mensagem clara.
-- **CPU, não GPU:** o `tract` roda só na CPU. Com muitas câmeras, aumente `interval_ms`,
+- **Só NPU/GPU Intel, via OpenVINO** (opcional); o resto roda na CPU com o `tract`. Com muitas câmeras, aumente `interval_ms`,
   ou troque para um modelo menor/`input_size` menor (`320` é ~4× mais rápido, com menos
   acerto em objetos pequenos).
 - **Use `--release`:** em build de debug a inferência é dezenas de vezes mais lenta.

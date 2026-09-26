@@ -17,6 +17,7 @@
 
 pub mod classes;
 mod engine;
+mod ov;
 mod yolo;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -26,6 +27,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 pub use engine::{Engine, Status};
+pub use ov::{available_devices, npu_permission_hint, npu_present};
+pub use yolo::DevicePref;
 
 /// Confiança mínima usada quando a câmera não define a dela.
 pub const DEFAULT_CONFIDENCE: f32 = 0.45;

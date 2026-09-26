@@ -16,8 +16,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 
-use super::yolo::{Model, Params};
-use super::{DetectionState, classes};
+use super::DetectionState;
+use super::yolo::{DevicePref, Model, Params};
 use crate::config;
 
 /// YOLOv8n (COCO, fp32, ONNX) fixado por commit: o conteúdo não muda debaixo
@@ -70,6 +70,8 @@ struct Job {
 pub struct Engine {
     config: config::Detection,
     status: Mutex<Status>,
+    /// Dispositivo em que o modelo está rodando, depois de carregado.
+    device: Mutex<Option<String>>,
     /// Existe a partir do momento em que o modelo está pronto.
     jobs: OnceLock<mpsc::Sender<Job>>,
     /// Já tem um carregamento em andamento?
@@ -89,9 +91,15 @@ impl Engine {
         Self {
             config,
             status: Mutex::new(Status::Idle),
+            device: Mutex::new(None),
             jobs: OnceLock::new(),
             preparing: AtomicBool::new(false),
         }
+    }
+
+    /// `"CPU"`, `"NPU (Intel(R) AI Boost)"`… — `None` até o modelo carregar.
+    pub fn device(&self) -> Option<String> {
+        self.device.lock().unwrap().clone()
     }
 
     pub fn status(&self) -> Status {
@@ -149,23 +157,16 @@ impl Engine {
         }
 
         self.set_status(Status::Loading);
-        let model = Arc::new(Model::load(&path, self.config.input_size)?);
-
-        // Um quadro preto de ponta a ponta: pega na hora um modelo com saída
-        // incompatível, em vez de falhar só quando a primeira câmera mandar.
-        let (width, height) = (self.config.input_size, self.config.input_size * 9 / 16);
-        model
-            .detect(
-                &vec![0u8; width * height * 3],
-                width,
-                height,
-                &Params {
-                    classes: &[true; classes::COUNT],
-                    min_confidence: 0.99,
-                    iou: self.config.iou,
-                },
-            )
-            .with_context(|| format!("o modelo {} não é utilizável", path.display()))?;
+        let pref = DevicePref::parse(&self.config.device).unwrap_or(DevicePref::Auto);
+        let model = Arc::new(
+            Model::load(&path, self.config.input_size, pref)
+                .with_context(|| format!("o modelo {} não é utilizável", path.display()))?,
+        );
+        tracing::info!(
+            dispositivo = model.device(),
+            "identificação de objetos pronta"
+        );
+        *self.device.lock().unwrap() = Some(model.device().to_string());
 
         let (tx, rx) = mpsc::channel::<Job>();
         let rx = Arc::new(Mutex::new(rx));
@@ -182,6 +183,15 @@ impl Engine {
     }
 
     fn work(&self, model: &Model, rx: &Mutex<mpsc::Receiver<Job>>) {
+        // Cada thread tem o seu contexto de execução (no OpenVINO, uma
+        // requisição de inferência própria).
+        let mut session = match model.session() {
+            Ok(session) => session,
+            Err(err) => {
+                self.set_status(Status::Failed(format!("{err:#}")));
+                return;
+            }
+        };
         loop {
             // O lock só segura a espera; quem pega o job já o solta para os
             // outros workers poderem esperar o próximo.
@@ -195,7 +205,7 @@ impl Engine {
                 min_confidence,
                 iou: self.config.iou,
             };
-            match model.detect(&job.rgb, job.width, job.height, &params) {
+            match session.detect(&job.rgb, job.width, job.height, &params) {
                 Ok(found) => job.state.publish(found, job.width, job.height),
                 Err(err) => {
                     // Modelo que falha em quadro válido não vai melhorar sozinho.

@@ -3,12 +3,20 @@ name = "camera-manager"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# Aceleração da identificação de objetos por NPU/GPU Intel via OpenVINO. A
+# biblioteca é carregada em tempo de execução (não é preciso tê-la para compilar
+# nem para rodar): sem ela, ou sem NPU, tudo cai na CPU (`tract`).
+default = ["openvino"]
+openvino = ["dep:openvino"]
+
 [dependencies]
 anyhow = "1.0.104"
 async-channel = "2.5.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 gst = { version = "0.25.3", package = "gstreamer" }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_12"] }
+openvino = { version = "0.11.0", features = ["runtime-linking"], optional = true }
 percent-encoding = "2.3.2"
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.0"

@@ -249,6 +249,24 @@ async fn check(config: &Config, store: &Store) -> Result<()> {
             "será baixado ao ligar"
         }
     );
+    let accelerators = detection::available_devices();
+    println!(
+        "  Aceleração da identificação de objetos: {} (device = \"{}\")",
+        if accelerators.is_empty() {
+            "OpenVINO não encontrado — roda na CPU".to_string()
+        } else {
+            format!("OpenVINO vê {}", accelerators.join(", "))
+        },
+        config.detection.device
+    );
+    if let Some(hint) = detection::npu_permission_hint() {
+        println!("  Atenção: {hint}");
+    } else if accelerators.is_empty() && detection::npu_present() {
+        println!(
+            "  Atenção: há uma NPU, mas o OpenVINO não está instalado \
+             (Arch: sudo pacman -S openvino openvino-intel-npu-plugin)"
+        );
+    }
     println!(
         "  Movimento: {}",
         if config.motion.enabled {

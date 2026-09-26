@@ -250,6 +250,11 @@ pub struct Detection {
     /// IoU acima do qual duas caixas da mesma classe são o mesmo objeto.
     #[serde(default = "default_detection_iou")]
     pub iou: f32,
+    /// Onde rodar o modelo: `"auto"` (NPU se houver, senão CPU), `"cpu"`,
+    /// `"npu"` ou `"gpu"` (NPU/GPU Intel, via OpenVINO). Se o dispositivo pedido
+    /// não existir ou não rodar o modelo, cai na CPU.
+    #[serde(default = "default_detection_device")]
+    pub device: String,
     /// Threads de inferência, compartilhadas por todas as câmeras.
     #[serde(default = "default_detection_workers")]
     pub workers: usize,
@@ -331,6 +336,7 @@ impl Default for Detection {
             model_url: None,
             model_sha256: None,
             input_size: default_detection_input_size(),
+            device: default_detection_device(),
             interval_ms: default_detection_interval_ms(),
             confidence: default_detection_confidence(),
             iou: default_detection_iou(),
@@ -400,6 +406,9 @@ fn default_motion_sensitivity() -> f64 {
 }
 fn default_motion_cooldown_secs() -> u64 {
     10
+}
+fn default_detection_device() -> String {
+    "auto".to_string()
 }
 fn default_detection_input_size() -> usize {
     640
@@ -515,6 +524,12 @@ impl Config {
         if !(160..=1280).contains(&detection.input_size) || !detection.input_size.is_multiple_of(32)
         {
             bail!("`detection.input_size` precisa ser múltiplo de 32, entre 160 e 1280");
+        }
+        if crate::detection::DevicePref::parse(&detection.device).is_none() {
+            bail!(
+                "`detection.device` deve ser \"auto\", \"cpu\", \"npu\" ou \"gpu\", não {:?}",
+                detection.device
+            );
         }
         if detection.interval_ms < 50 {
             bail!("`detection.interval_ms` precisa ser >= 50");
@@ -779,6 +794,7 @@ mod tests {
         let config = parse("").unwrap();
         let d = &config.detection;
         assert_eq!((d.input_size, d.interval_ms, d.workers), (640, 500, 2));
+        assert_eq!(d.device, "auto");
         assert_eq!(d.cooldown_secs, 30);
         assert!(d.notify);
         assert!(d.model_path.is_none() && d.model_url.is_none());
@@ -816,6 +832,7 @@ mod tests {
         for (raw, campo) in [
             ("[detection]\ninput_size = 100\n", "detection.input_size"),
             ("[detection]\ninput_size = 650\n", "detection.input_size"),
+            ("[detection]\ndevice = \"tpu\"\n", "detection.device"),
             ("[detection]\ninterval_ms = 10\n", "detection.interval_ms"),
             ("[detection]\nconfidence = 0.0\n", "detection.confidence"),
             ("[detection]\niou = 1.5\n", "detection.iou"),

@@ -150,6 +150,14 @@ notify = false
 # model_url = "https://exemplo.com/yolo11s.onnx"
 # model_sha256 = "…"
 
+# Onde rodar o modelo:
+#   "auto" (padrão) — na NPU Intel se houver, senão na CPU;
+#   "cpu"           — sempre na CPU;
+#   "npu" / "gpu"   — NPU ou GPU Intel; se não houver, cai na CPU.
+# NPU/GPU usam o OpenVINO (Arch: `sudo pacman -S openvino openvino-intel-npu-plugin`),
+# carregado em tempo de execução: sem ele o app funciona igual, na CPU.
+device = "auto"
+
 # Lado do quadrado de entrada do modelo (múltiplo de 32, 160–1280). Precisa
 # bater com o tamanho da exportação do .onnx. 320 é ~4× mais rápido que 640.
 input_size = 640

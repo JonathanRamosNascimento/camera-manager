@@ -1,0 +1,4 @@
+# Libera a NPU (/dev/accel/accel*) para quem está logado na máquina, sem precisar
+# estar no grupo `render` nem entrar de novo na sessão. É o mesmo mecanismo
+# (`uaccess`) que dá acesso às GPUs em /dev/dri.
+SUBSYSTEM=="accel", TAG+="uaccess"

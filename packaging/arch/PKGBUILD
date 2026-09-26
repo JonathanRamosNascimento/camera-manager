@@ -20,9 +20,12 @@ makedepends=('cargo' 'pkgconf')
 # então gera objetos C que o rust-lld não sabe ligar ("undefined symbol: ring_core_…").
 # O Rust já otimiza sozinho, então nada se perde.
 options=('!lto')
+install=camera-manager.install
 conflicts=('nvr-dashboard')
 replaces=('nvr-dashboard')
-optdepends=('gst-plugin-pipewire: áudio via PipeWire'
+optdepends=('openvino: identificação de objetos na NPU/GPU Intel (senão, roda na CPU)'
+            'openvino-intel-npu-plugin: NPU Intel (Core Ultra) para a identificação de objetos'
+            'gst-plugin-pipewire: áudio via PipeWire'
             'gst-plugins-ugly: decoders extras'
             'gst-plugin-va: decodificação por hardware (VA-API)'
             'gst-plugin-nvcodec: decodificação por hardware (NVIDIA)')
@@ -49,5 +52,7 @@ package() {
         "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.cameramanager.CameraManager.svg"
     install -Dm644 config/cameras.example.toml \
         "$pkgdir/usr/share/camera-manager/cameras.example.toml"
+    install -Dm644 packaging/arch/70-camera-manager-npu.rules \
+        "$pkgdir/usr/lib/udev/rules.d/70-camera-manager-npu.rules"
     install -Dm644 README.md "$pkgdir/usr/share/doc/camera-manager/README.md"
 }

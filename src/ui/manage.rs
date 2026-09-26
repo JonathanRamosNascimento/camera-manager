@@ -736,6 +736,21 @@ pub(super) fn show_detection(dash: &Rc<Dashboard>, id: usize) {
         &dash.stored_detection(&slot),
         dash.config.detection.confidence,
     );
+    let engine = &dash.spawner.options.detection.engine;
+    let device = label(
+        &match engine.device() {
+            Some(device) => format!("Rodando em: {device}"),
+            None => format!(
+                "Dispositivo: {} (definido quando o modelo carrega)",
+                match dash.config.detection.device.as_str() {
+                    "auto" => "NPU se houver, senão CPU",
+                    other => other,
+                }
+            ),
+        },
+        &["dim-label", "caption"],
+    );
+    form.widget().append(&device);
     let status = label("", &["error-text"]);
 
     let cancel = gtk::Button::with_label("Cancelar");
