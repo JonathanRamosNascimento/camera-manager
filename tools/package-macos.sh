@@ -80,10 +80,12 @@ for theme in Adwaita hicolor; do
     [ -d "$BREW/share/icons/$theme" ] && cp -R "$BREW/share/icons/$theme" "$RES/share/icons/"
 done
 for size in 16 24 32 48 64 128 256; do
-    install -Dm644 "packaging/icons/$size.png" \
-        "$RES/share/icons/hicolor/${size}x${size}/apps/io.github.cameramanager.CameraManager.png"
+    dir="$RES/share/icons/hicolor/${size}x${size}/apps"
+    mkdir -p "$dir"
+    chmod u+w "$dir"
+    install -m644 "packaging/icons/$size.png" "$dir/io.github.cameramanager.CameraManager.png"
 done
-install -Dm644 config/cameras.example.toml "$RES/cameras.example.toml"
+install -m644 config/cameras.example.toml "$RES/cameras.example.toml"
 
 echo "==> Ícone e Info.plist"
 MINOS="$(sw_vers -productVersion | cut -d. -f1).0"
