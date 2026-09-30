@@ -20,6 +20,7 @@ use crate::detection::DetectionState;
 use crate::reconnect::CameraState;
 use crate::ui::camera_tile::describe;
 use crate::ui::detection_overlay::DetectionOverlay;
+use crate::ui::zone_editor::ZoneEditor;
 use crate::ui::{UiAction, camera_tile};
 
 const STATUS_CLASSES: [&str; 3] = ["status-live", "status-connecting", "status-error"];
@@ -37,6 +38,11 @@ pub struct FullscreenView {
     record_button: gtk::Button,
     listen_button: gtk::Button,
     detect_button: gtk::Button,
+    zones_button: gtk::Button,
+    main_tools: gtk::Box,
+    /// Botões que só aparecem durante a edição das áreas.
+    zone_tools: gtk::Box,
+    editor: Rc<ZoneEditor>,
     center: gtk::Box,
     spinner: gtk::Spinner,
     status: gtk::Label,
@@ -64,7 +70,10 @@ impl FullscreenView {
             .child(&picture)
             .build();
         let detection_overlay = DetectionOverlay::new();
+        detection_overlay.set_picture(&picture);
         overlay.add_overlay(detection_overlay.widget());
+        let editor = Rc::new(ZoneEditor::new());
+        overlay.add_overlay(editor.widget());
 
         // ---- faixa superior -------------------------------------------------
         let dot = gtk::Label::builder()
@@ -163,6 +172,44 @@ impl FullscreenView {
             .label("Objetos…")
             .tooltip_text("Configura a identificação de objetos")
             .build();
+        let zones_button = gtk::Button::builder()
+            .icon_name("view-fullscreen-symbolic")
+            .label("Áreas…")
+            .tooltip_text("Marca as áreas do vídeo onde os objetos devem ser identificados")
+            .sensitive(false)
+            .build();
+        let zone_tools = gtk::Box::builder().spacing(8).visible(false).build();
+        let close_zone = gtk::Button::with_label("Fechar área");
+        close_zone.set_tooltip_text(Some(
+            "Conclui o polígono em desenho (ou clique no primeiro ponto)",
+        ));
+        let undo_zone = gtk::Button::with_label("Desfazer ponto");
+        undo_zone.set_tooltip_text(Some(
+            "Botão direito também desfaz; sobre uma área, apaga o ponto ou a área",
+        ));
+        let clear_zone = gtk::Button::with_label("Limpar tudo");
+        let cancel_zone = gtk::Button::with_label("Cancelar");
+        let save_zone = gtk::Button::builder()
+            .label("Salvar áreas")
+            .css_classes(["suggested-action"])
+            .build();
+        for b in [
+            &close_zone,
+            &undo_zone,
+            &clear_zone,
+            &cancel_zone,
+            &save_zone,
+        ] {
+            zone_tools.append(b);
+        }
+        {
+            let e = Rc::clone(&editor);
+            close_zone.connect_clicked(move |_| e.finish_draft());
+            let e = Rc::clone(&editor);
+            undo_zone.connect_clicked(move |_| e.undo());
+            let e = Rc::clone(&editor);
+            clear_zone.connect_clicked(move |_| e.clear());
+        }
         bind_current(
             &detect_button,
             actions,
@@ -181,10 +228,20 @@ impl FullscreenView {
         toolbar.append(&back);
         let spacer = gtk::Box::builder().hexpand(true).build();
         toolbar.append(&spacer);
-        toolbar.append(&detect_button);
-        toolbar.append(&snapshot_button);
-        toolbar.append(&listen_button);
-        toolbar.append(&record_button);
+        toolbar.append(&zone_tools);
+        // Os botões de sempre saem da frente durante a edição das áreas, para
+        // os da edição terem espaço e não ficarem com o texto cortado.
+        let main_tools = gtk::Box::builder().spacing(8).build();
+        for b in [
+            &zones_button,
+            &detect_button,
+            &snapshot_button,
+            &listen_button,
+            &record_button,
+        ] {
+            main_tools.append(b);
+        }
+        toolbar.append(&main_tools);
 
         let root = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -193,6 +250,33 @@ impl FullscreenView {
             .build();
         root.append(&overlay);
         root.append(&toolbar);
+
+        // Cancelar/Salvar encerram a edição. «Salvar» avisa o Dashboard, que lê
+        // as áreas em `take_zones` (o modelo do editor sobrevive ao `end`).
+        {
+            let (editor, main_tools, zone_tools, overlay) = (
+                Rc::clone(&editor),
+                main_tools.clone(),
+                zone_tools.clone(),
+                detection_overlay.clone_handle(),
+            );
+            let leave = Rc::new(move || {
+                editor.end();
+                zone_tools.set_visible(false);
+                main_tools.set_visible(true);
+                overlay.set_show_zones(true);
+            });
+            let leave_cancel = Rc::clone(&leave);
+            cancel_zone.connect_clicked(move |_| leave_cancel());
+            let (sender, current) = (actions.clone(), Rc::clone(&current));
+            save_zone.connect_clicked(move |_| {
+                if let Some(id) = current.get() {
+                    let _ = sender.try_send(UiAction::SaveZones(id));
+                }
+                leave();
+            });
+        }
+        bind_current(&zones_button, actions, &current, UiAction::EditZones);
 
         Self {
             root,
@@ -207,6 +291,10 @@ impl FullscreenView {
             record_button,
             listen_button,
             detect_button,
+            zones_button,
+            main_tools,
+            zone_tools,
+            editor,
             center,
             spinner,
             status,
@@ -248,6 +336,10 @@ impl FullscreenView {
     /// Solta o paintable ao voltar para o grid, para não segurar referências.
     pub fn clear(&self) {
         self.current.set(None);
+        self.editor.end();
+        self.zone_tools.set_visible(false);
+        self.main_tools.set_visible(true);
+        self.overlay.set_show_zones(true);
         self.overlay.set_source(None);
         self.picture.set_paintable(gdk::Paintable::NONE);
         *self.paintable.borrow_mut() = None;
@@ -328,8 +420,37 @@ impl FullscreenView {
         }
     }
 
+    /// Abre o editor de áreas sobre o vídeo, com as áreas atuais.
+    pub fn begin_zone_edit(&self) {
+        let Some(state) = self.overlay.source() else {
+            return;
+        };
+        if let Some(p) = self.picture.paintable() {
+            self.editor.set_aspect(
+                f64::from(p.intrinsic_width()),
+                f64::from(p.intrinsic_height()),
+            );
+        }
+        self.editor.begin(&state.zones());
+        self.overlay.set_show_zones(false);
+        self.zone_tools.set_visible(true);
+        self.main_tools.set_visible(false);
+    }
+
+    /// Áreas desenhadas no editor (fecha o polígono pendente).
+    pub fn take_zones(&self) -> Vec<crate::detection::Zone> {
+        self.editor.take_zones()
+    }
+
     /// Reflete no botão se a identificação de objetos está ligada nesta câmera.
     pub fn set_detection_enabled(&self, on: bool) {
+        self.zones_button.set_sensitive(on);
+        if !on && self.editor.is_active() {
+            self.editor.end();
+            self.zone_tools.set_visible(false);
+            self.main_tools.set_visible(true);
+            self.overlay.set_show_zones(true);
+        }
         if on {
             self.detect_button.add_css_class("detect-on");
         } else {

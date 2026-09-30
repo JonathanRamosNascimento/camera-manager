@@ -23,7 +23,7 @@ pub const DEFAULT_RTSP_PORT: u16 = 554;
 const FILE_NAME: &str = "devices.toml";
 
 /// Um canal (uma câmera) de um dispositivo.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelEntry {
     pub channel: u32,
     pub name: String,
@@ -150,6 +150,10 @@ impl Store {
                 Vec::new()
             }
         };
+        let mut devices = devices;
+        for channel in devices.iter_mut().flat_map(|d| d.channels.iter_mut()) {
+            channel.detection.sanitize_zones();
+        }
         Self { path, devices }
     }
 

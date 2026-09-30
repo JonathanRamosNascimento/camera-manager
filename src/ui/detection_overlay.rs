@@ -15,6 +15,7 @@ use gtk::prelude::*;
 use gtk::{cairo, glib};
 
 use crate::detection::{DetectionState, classes};
+use crate::ui::zone_editor;
 
 /// De quanto em quanto tempo checar se há algo novo para desenhar.
 const REFRESH: Duration = Duration::from_millis(150);
@@ -31,9 +32,25 @@ const PALETTE: [(f64, f64, f64); 8] = [
     (0.95, 0.40, 0.75), // rosa
 ];
 
+#[derive(Clone)]
 pub struct DetectionOverlay {
     area: gtk::DrawingArea,
     source: Rc<RefCell<Option<Arc<DetectionState>>>>,
+    /// Vídeo sob o overlay: dá a proporção do quadro para desenhar as áreas
+    /// mesmo quando não há detecção.
+    picture: Rc<RefCell<Option<gtk::Picture>>>,
+    /// Desligado enquanto o editor de áreas desenha as dele.
+    show_zones: Rc<Cell<bool>>,
+}
+
+/// Tamanho do quadro exibido pelo `Picture`, se já houver vídeo.
+fn frame_size(picture: &Option<gtk::Picture>) -> Option<(f64, f64)> {
+    let p = picture.as_ref()?.paintable()?;
+    let (w, h) = (
+        f64::from(p.intrinsic_width()),
+        f64::from(p.intrinsic_height()),
+    );
+    (w > 0.0 && h > 0.0).then_some((w, h))
 }
 
 impl DetectionOverlay {
@@ -45,12 +62,24 @@ impl DetectionOverlay {
             .focusable(false)
             .build();
         let source: Rc<RefCell<Option<Arc<DetectionState>>>> = Rc::new(RefCell::new(None));
+        let picture: Rc<RefCell<Option<gtk::Picture>>> = Rc::new(RefCell::new(None));
+        let show_zones = Rc::new(Cell::new(true));
 
         {
             let source = Rc::clone(&source);
+            let picture = Rc::clone(&picture);
+            let show_zones = Rc::clone(&show_zones);
             area.set_draw_func(move |_, cr, width, height| {
                 if let Some(state) = &*source.borrow() {
-                    draw(cr, f64::from(width), f64::from(height), state);
+                    let frame = frame_size(&picture.borrow());
+                    draw(
+                        cr,
+                        f64::from(width),
+                        f64::from(height),
+                        state,
+                        frame,
+                        show_zones.get(),
+                    );
                 }
             });
         }
@@ -60,7 +89,8 @@ impl DetectionOverlay {
         {
             let weak = area.downgrade();
             let source = Rc::clone(&source);
-            let last = Cell::new(None::<(u64, bool, Option<String>)>);
+            let picture = Rc::clone(&picture);
+            let last = Cell::new(None::<(u64, bool, Option<String>, Option<(u32, u32)>)>);
             glib::timeout_add_local(REFRESH, move || {
                 let Some(area) = weak.upgrade() else {
                     return glib::ControlFlow::Break;
@@ -70,6 +100,7 @@ impl DetectionOverlay {
                         state.seq(),
                         !state.snapshot().detections.is_empty(),
                         state.status().describe(),
+                        frame_size(&picture.borrow()).map(|(w, h)| (w as u32, h as u32)),
                     )
                 });
                 let previous = last.replace(key.clone());
@@ -80,7 +111,31 @@ impl DetectionOverlay {
             });
         }
 
-        Self { area, source }
+        Self {
+            area,
+            source,
+            picture,
+            show_zones,
+        }
+    }
+
+    /// Indica o `Picture` que fica sob o overlay.
+    pub fn set_picture(&self, picture: &gtk::Picture) {
+        *self.picture.borrow_mut() = Some(picture.clone());
+    }
+
+    /// Outra referência ao mesmo overlay (compartilha o estado).
+    pub fn clone_handle(&self) -> Self {
+        self.clone()
+    }
+
+    pub fn source(&self) -> Option<Arc<DetectionState>> {
+        self.source.borrow().clone()
+    }
+
+    pub fn set_show_zones(&self, on: bool) {
+        self.show_zones.set(on);
+        self.area.queue_draw();
     }
 
     pub fn widget(&self) -> &gtk::DrawingArea {
@@ -102,8 +157,26 @@ fn fit(w: f64, h: f64, frame_w: f64, frame_h: f64) -> (f64, f64, f64, f64) {
     ((w - vw) / 2.0, (h - vh) / 2.0, vw, vh)
 }
 
-fn draw(cr: &cairo::Context, width: f64, height: f64, state: &DetectionState) {
+fn draw(
+    cr: &cairo::Context,
+    width: f64,
+    height: f64,
+    state: &DetectionState,
+    frame: Option<(f64, f64)>,
+    show_zones: bool,
+) {
     let snapshot = state.snapshot();
+    let frame = if snapshot.width > 0 && snapshot.height > 0 {
+        Some((snapshot.width as f64, snapshot.height as f64))
+    } else {
+        frame
+    };
+    if show_zones && let Some((fw, fh)) = frame {
+        let rect = fit(width, height, fw, fh);
+        for zone in state.zones() {
+            zone_editor::draw_polygon(cr, &zone.points, rect, true, false);
+        }
+    }
     if snapshot.width > 0 && snapshot.height > 0 {
         let (vx, vy, vw, vh) = fit(width, height, snapshot.width as f64, snapshot.height as f64);
         cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);

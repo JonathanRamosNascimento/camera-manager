@@ -649,6 +649,24 @@ com:
 Na primeira vez que alguém liga a detecção o app baixa o modelo (~12 MB, uma vez só; o
 progresso aparece sobre o vídeo).
 
+**Áreas monitoradas:** por padrão a câmera inteira é analisada. Para vigiar só parte da
+imagem (a calçada, a porta, o portão), abra a câmera em **tela cheia** e clique em
+**Áreas…** (o botão só fica ativo com a detecção ligada). Então:
+
+- **clique** no vídeo para marcar os cantos de um polígono; clique no **primeiro ponto** (ou
+  em **Fechar área**) para concluir — pode haver quantas áreas quiser;
+- **arraste** um ponto para ajustá-lo;
+- **botão direito** desfaz o último ponto em desenho; sobre uma área pronta, apaga o ponto
+  sob o cursor ou, se não houver ponto, a área inteira;
+- **Limpar tudo** remove todas as áreas (volta a analisar a câmera inteira) e **Salvar áreas**
+  grava. As áreas aparecem tracejadas em azul só na tela cheia (o card do grid não as mostra).
+
+Uma detecção só vale se o **ponto central da base da caixa** (os "pés" do objeto) estiver
+dentro de alguma área; fora delas a caixa não é desenhada e não gera aviso. As áreas valem
+na hora, sem reiniciar a câmera, e ficam no `devices.toml`, na seção de detecção do canal (`zones`, com
+`points` = pares `[x, y]` em frações de 0 a 1 do quadro). Arquivos antigos, sem áreas,
+continuam funcionando.
+
 Mudar classes ou confiança vale **na hora**. Ligar ou desligar a detecção reinicia a
 conexão daquela câmera (ela volta no mesmo lugar do grid, mas uma gravação em andamento
 é encerrada).

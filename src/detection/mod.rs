@@ -38,7 +38,7 @@ pub const DEFAULT_CONFIDENCE: f32 = 0.45;
 // ---------------------------------------------------------------------------
 
 /// Ajustes de detecção de uma câmera. Fica no `devices.toml`, junto do canal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DetectionSettings {
     #[serde(default)]
     pub enabled: bool,
@@ -50,6 +50,42 @@ pub struct DetectionSettings {
     /// Confiança mínima em %, no lugar do padrão global.
     #[serde(default)]
     pub confidence: Option<u8>,
+    /// Áreas monitoradas. Vazio = o quadro inteiro.
+    #[serde(default)]
+    pub zones: Vec<Zone>,
+}
+
+/// Uma área monitorada: polígono com vértices em frações (0–1) do quadro.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Zone {
+    pub points: Vec<(f32, f32)>,
+}
+
+impl Zone {
+    /// Polígono utilizável: ao menos 3 vértices, todos finitos e dentro do quadro.
+    pub fn is_valid(&self) -> bool {
+        self.points.len() >= 3
+            && self
+                .points
+                .iter()
+                .all(|&(x, y)| (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y))
+    }
+
+    /// Ponto dentro do polígono (regra par-ímpar; serve para côncavos).
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        let n = self.points.len();
+        let mut inside = false;
+        let mut j = n.wrapping_sub(1);
+        for i in 0..n {
+            let (xi, yi) = self.points[i];
+            let (xj, yj) = self.points[j];
+            if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
+                inside = !inside;
+            }
+            j = i;
+        }
+        inside
+    }
 }
 
 fn default_classes() -> Vec<String> {
@@ -62,6 +98,7 @@ impl Default for DetectionSettings {
             enabled: false,
             classes: default_classes(),
             confidence: None,
+            zones: Vec::new(),
         }
     }
 }
@@ -80,6 +117,20 @@ impl DetectionSettings {
             mask[id] = true;
         }
         mask
+    }
+
+    /// Remove zonas inválidas (arquivo editado à mão ou de outra versão).
+    pub fn sanitize_zones(&mut self) {
+        self.zones.retain(Zone::is_valid);
+    }
+
+    /// A detecção está numa área monitorada? Conta o ponto central da base da
+    /// caixa (os "pés"); sem áreas, vale o quadro inteiro.
+    pub fn accepts(zones: &[Zone], d: &Detection) -> bool {
+        zones.is_empty() || {
+            let (x, y) = ((d.x1 + d.x2) / 2.0, d.y2);
+            zones.iter().any(|z| z.contains(x, y))
+        }
     }
 
     /// Confiança mínima efetiva (0.0–1.0).
@@ -150,6 +201,7 @@ pub struct Snapshot {
 struct Active {
     classes: [bool; classes::COUNT],
     min_confidence: f32,
+    zones: Vec<Zone>,
 }
 
 #[derive(Debug, Default)]
@@ -203,6 +255,7 @@ impl DetectionState {
             active: Mutex::new(Active {
                 classes: settings.class_mask(),
                 min_confidence: settings.min_confidence(default_confidence),
+                zones: settings.zones.clone(),
             }),
             default_confidence,
             cooldown,
@@ -223,14 +276,22 @@ impl DetectionState {
         *self.active.lock().unwrap() = Active {
             classes: settings.class_mask(),
             min_confidence: settings.min_confidence(self.default_confidence),
+            zones: settings.zones.clone(),
         };
         // Some da tela o que deixou de ser pedido, sem esperar o próximo quadro.
         let mask = settings.class_mask();
+        let zones = &settings.zones;
+        let keep = |d: &Detection| mask[d.class] && DetectionSettings::accepts(zones, d);
         let mut latest = self.latest.lock().unwrap();
-        latest.snapshot.detections.retain(|d| mask[d.class]);
-        latest.fresh.retain(|d| mask[d.class]);
+        latest.snapshot.detections.retain(keep);
+        latest.fresh.retain(keep);
         drop(latest);
         self.seq.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Áreas monitoradas agora (vazio = quadro inteiro).
+    pub fn zones(&self) -> Vec<Zone> {
+        self.active.lock().unwrap().zones.clone()
     }
 
     pub fn status(&self) -> Status {
@@ -264,7 +325,18 @@ impl DetectionState {
         self.finish();
     }
 
-    fn publish_at(&self, detections: Vec<Detection>, width: usize, height: usize, now: Instant) {
+    fn publish_at(
+        &self,
+        mut detections: Vec<Detection>,
+        width: usize,
+        height: usize,
+        now: Instant,
+    ) {
+        {
+            // Fora das áreas monitoradas não é exibido nem avisado.
+            let active = self.active.lock().unwrap();
+            detections.retain(|d| DetectionSettings::accepts(&active.zones, d));
+        }
         let mut counts = [0usize; classes::COUNT];
         for d in &detections {
             counts[d.class] += 1;
@@ -553,5 +625,116 @@ mod tests {
         assert_eq!(state.snapshot().detections.len(), 1);
         assert_eq!(state.snapshot().detections[0].class, 16);
         assert!(state.seq() > seq, "a UI precisa redesenhar");
+    }
+
+    fn square() -> Zone {
+        Zone {
+            points: vec![(0.0, 0.0), (0.5, 0.0), (0.5, 0.5), (0.0, 0.5)],
+        }
+    }
+
+    #[test]
+    fn zona_contem_pontos_dentro_e_nao_fora() {
+        let z = square();
+        assert!(z.contains(0.25, 0.25));
+        assert!(!z.contains(0.75, 0.25));
+        assert!(!z.contains(0.25, 0.75));
+    }
+
+    #[test]
+    fn zona_concava_respeita_o_recorte() {
+        // "L": o canto superior direito está fora.
+        let z = Zone {
+            points: vec![
+                (0.0, 0.0),
+                (0.4, 0.0),
+                (0.4, 0.6),
+                (1.0, 0.6),
+                (1.0, 1.0),
+                (0.0, 1.0),
+            ],
+        };
+        assert!(z.contains(0.2, 0.3));
+        assert!(z.contains(0.8, 0.8));
+        assert!(!z.contains(0.8, 0.3));
+    }
+
+    #[test]
+    fn sem_zonas_aceita_tudo_e_com_zonas_usa_a_base_da_caixa() {
+        let d = Detection {
+            class: 0,
+            score: 0.9,
+            x1: 0.1,
+            y1: 0.1,
+            x2: 0.3,
+            y2: 0.4,
+        };
+        assert!(DetectionSettings::accepts(&[], &d));
+        assert!(DetectionSettings::accepts(&[square()], &d));
+        // Topo da caixa dentro, pés fora: não conta.
+        let tall = Detection { y2: 0.9, ..d };
+        assert!(!DetectionSettings::accepts(&[square()], &tall));
+    }
+
+    #[test]
+    fn publicar_descarta_o_que_esta_fora_das_areas() {
+        let s = state(0, 1000);
+        s.update(&DetectionSettings {
+            zones: vec![square()],
+            ..DetectionSettings::default()
+        });
+        let fora = Detection {
+            x1: 0.6,
+            x2: 0.9,
+            ..person()
+        };
+        s.publish(vec![fora], 640, 480);
+        assert!(s.snapshot().detections.is_empty());
+        assert!(s.take_alerts().is_empty());
+
+        let dentro = Detection {
+            x1: 0.1,
+            y1: 0.1,
+            x2: 0.3,
+            y2: 0.4,
+            ..person()
+        };
+        s.publish(vec![dentro], 640, 480);
+        assert_eq!(s.snapshot().detections.len(), 1);
+        assert_eq!(s.take_alerts().len(), 1);
+    }
+
+    #[test]
+    fn zonas_serializam_e_arquivo_antigo_continua_valido() {
+        let antigo: DetectionSettings = toml::from_str("enabled = true").unwrap();
+        assert!(antigo.zones.is_empty());
+
+        let com = DetectionSettings {
+            enabled: true,
+            zones: vec![square()],
+            ..DetectionSettings::default()
+        };
+        assert!(!com.is_default());
+        let texto = toml::to_string(&com).unwrap();
+        let volta: DetectionSettings = toml::from_str(&texto).unwrap();
+        assert_eq!(volta, com);
+    }
+
+    #[test]
+    fn zonas_invalidas_sao_descartadas() {
+        let mut s = DetectionSettings {
+            zones: vec![
+                square(),
+                Zone {
+                    points: vec![(0.0, 0.0), (1.0, 1.0)],
+                },
+                Zone {
+                    points: vec![(0.0, 0.0), (2.0, 0.0), (1.0, 1.0)],
+                },
+            ],
+            ..DetectionSettings::default()
+        };
+        s.sanitize_zones();
+        assert_eq!(s.zones, vec![square()]);
     }
 }

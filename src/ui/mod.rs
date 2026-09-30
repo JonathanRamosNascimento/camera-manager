@@ -25,6 +25,7 @@ pub mod grid;
 pub mod manage;
 pub mod quality;
 pub mod snapshot;
+pub mod zone_editor;
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -76,6 +77,10 @@ pub enum UiAction {
     SetQuality(usize, Quality),
     /// Abrir a tela de identificação de objetos da câmera (botão de olho).
     ConfigureDetection(usize),
+    /// Desenhar as áreas monitoradas da câmera (tela cheia).
+    EditZones(usize),
+    /// Gravar as áreas que o editor da tela cheia está mostrando.
+    SaveZones(usize),
     /// Abrir a lista de câmeras cadastradas.
     ShowCameras,
     /// Abrir o formulário de cadastro manual.
@@ -599,6 +604,25 @@ impl Dashboard {
             format!("Identificação de objetos ligada em {name}")
         } else {
             format!("Identificação de objetos desligada em {name}")
+        });
+    }
+
+    /// Grava as áreas desenhadas na tela cheia e aplica na hora.
+    fn save_zones(&self, id: usize) {
+        if self.fullscreen.current() != Some(id) {
+            return;
+        }
+        let Some(slot) = self.slot(id) else {
+            return;
+        };
+        let mut settings = self.stored_detection(&slot);
+        settings.zones = self.fullscreen.take_zones();
+        let count = settings.zones.len();
+        self.set_detection(id, settings);
+        self.toast(&if count == 0 {
+            "Sem áreas: a câmera inteira é analisada".to_string()
+        } else {
+            format!("{count} área(s) monitorada(s) salva(s)")
         });
     }
 
@@ -1249,6 +1273,8 @@ fn spawn_loops(
                 UiAction::ToggleListen(id) => target.toggle_listen(id),
                 UiAction::SetQuality(id, quality) => target.set_quality(id, quality),
                 UiAction::ConfigureDetection(id) => manage::show_detection(&target, id),
+                UiAction::EditZones(_) => target.fullscreen.begin_zone_edit(),
+                UiAction::SaveZones(id) => target.save_zones(id),
                 UiAction::ShowCameras => manage::show_cameras(&target),
                 UiAction::AddManual => manage::show_add_device(&target, None),
                 UiAction::ScanNetwork => manage::show_scan(&target),

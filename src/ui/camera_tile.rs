@@ -99,6 +99,9 @@ impl CameraTile {
 
         // Caixas da identificação de objetos, entre o vídeo e a faixa superior.
         let overlay = DetectionOverlay::new();
+        overlay.set_picture(&picture);
+        // As áreas monitoradas só aparecem na tela cheia.
+        overlay.set_show_zones(false);
         overlay.set_source(detection.clone());
         root.add_overlay(overlay.widget());
 

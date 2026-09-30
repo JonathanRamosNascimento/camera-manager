@@ -576,6 +576,8 @@ struct DetectionForm {
     confidence: gtk::Scale,
     /// `(id da classe, caixa de seleção)`, na ordem em que aparecem.
     checks: Vec<(usize, gtk::CheckButton)>,
+    /// Áreas monitoradas: desenhadas na tela cheia, aqui só são preservadas.
+    zones: Vec<crate::detection::Zone>,
 }
 
 impl DetectionForm {
@@ -662,7 +664,8 @@ impl DetectionForm {
         let hint = label(
             "Roda um modelo YOLO no seu computador e custa CPU: ligue só nas câmeras \
              que precisam. Ligar ou desligar reinicia a conexão desta câmera; mudar \
-             classes e confiança vale na hora.",
+             classes e confiança vale na hora. Para limitar a detecção a certas áreas \
+             do vídeo, abra a câmera em tela cheia e use o botão «Áreas».",
             &["dim-label", "caption"],
         );
         hint.set_wrap(true);
@@ -685,6 +688,7 @@ impl DetectionForm {
             enabled,
             confidence,
             checks,
+            zones: current.zones.clone(),
         }
     }
 
@@ -716,6 +720,7 @@ impl DetectionForm {
             // em `[detection]` continue valendo para esta câmera.
             confidence: Some(self.confidence.value().round() as u8)
                 .filter(|&pct| pct != (self.default_confidence * 100.0).round() as u8),
+            zones: self.zones.clone(),
         })
     }
 }
