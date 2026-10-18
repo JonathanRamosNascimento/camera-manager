@@ -38,6 +38,9 @@ pkgver() {
 
 build() {
     cd "$_root"
+    # Com o rustup no lugar do pacote `rust`, fixa o toolchain em vez de depender do
+    # `rustup default` do usuário (que pode nem existir).
+    export RUSTUP_TOOLCHAIN=stable
     # `--locked` garante as versões do Cargo.lock; o alvo fica em $srcdir para não
     # sujar o repositório.
     CARGO_TARGET_DIR="$srcdir/target" cargo build --release --locked
