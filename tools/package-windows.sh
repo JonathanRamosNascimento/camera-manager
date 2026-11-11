@@ -2,8 +2,8 @@
 # Empacota o camera-manager para Windows (x64): pasta autocontida, .zip portátil e,
 # se o Inno Setup estiver disponível, um instalador .exe.
 #
-# Roda no MSYS2, terminal "MSYS2 MINGW64". Pré-requisitos (pacman):
-#   mingw-w64-x86_64-{toolchain,rust,gtk4,gstreamer,gst-plugins-base,gst-plugins-good,
+# Roda no MSYS2, terminal "MSYS2 UCRT64". Pré-requisitos (pacman):
+#   mingw-w64-ucrt-x86_64-{toolchain,rust,gtk4,gstreamer,gst-plugins-base,gst-plugins-good,
 #   gst-plugins-bad,gst-plugins-ugly,gst-libav,adwaita-icon-theme} git zip
 # e o plugin gtk4paintablesink compilado (veja tools/build-gtk4-plugin.sh), cujo
 # caminho vai em GTK4_PLUGIN_DLL.
@@ -25,7 +25,7 @@
 # Se houver também uma pasta `openvino/`, ele aponta `INTEL_OPENVINO_DIR` pra ela.
 #
 # O ícone (icone.ico, na raiz do repo) é embutido no .exe pelo build.rs (windres, do
-# mingw-w64-x86_64-toolchain) e reaproveitado pelo instalador (Inno Setup).
+# mingw-w64-ucrt-x86_64-toolchain) e reaproveitado pelo instalador (Inno Setup).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,7 +33,7 @@ cd "$ROOT"
 
 NAME=camera-manager
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-PREFIX="${MSYSTEM_PREFIX:-/mingw64}"
+PREFIX="${MSYSTEM_PREFIX:-/ucrt64}"
 OUT="$ROOT/dist"
 DIST="$OUT/$NAME-$VERSION-windows-x64"
 

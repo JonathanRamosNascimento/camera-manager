@@ -269,10 +269,10 @@ Aplicativos* para desinstalar. **Portátil:** extraia o `.zip` e rode
   (`rtsp_protocols = "udp"`); o padrão TCP não pergunta.
 
 Compilar no Windows: instale o [MSYS2](https://www.msys2.org), abra o terminal
-**MSYS2 MINGW64** e rode (pacotes do GTK4/GStreamer, Rust do próprio MSYS2):
+**MSYS2 UCRT64** e rode (pacotes do GTK4/GStreamer, Rust do próprio MSYS2):
 
 ```sh
-pacman -S --needed git zip base-devel mingw-w64-x86_64-{toolchain,rust,pkgconf,gtk4,gstreamer,\
+pacman -S --needed git zip base-devel mingw-w64-ucrt-x86_64-{toolchain,rust,pkgconf,gtk4,gstreamer,\
 gst-plugins-base,gst-plugins-good,gst-plugins-bad,gst-plugins-ugly,gst-libav,adwaita-icon-theme}
 export GTK4_PLUGIN_DLL="$(tools/build-gtk4-plugin.sh "$PWD/gtk4-plugin")"
 tools/package-windows.sh          # gera dist/…-windows-x64.zip (+ setup.exe se tiver o Inno Setup)
@@ -380,7 +380,7 @@ Segredo opcional `MACOS_SIGN_IDENTITY` (repositório → *Settings → Secrets*)
 |---|---|---|
 | `.deb` | `tools/setup-ubuntu.sh && tools/build-deb.sh` | Ubuntu/Debian (gera em `dist/`) |
 | Arch | `cd packaging/arch && makepkg -s` | Arch Linux |
-| Windows | `GTK4_PLUGIN_DLL=… tools/package-windows.sh` | MSYS2 MINGW64 no Windows |
+| Windows | `GTK4_PLUGIN_DLL=… tools/package-windows.sh` | MSYS2 UCRT64 no Windows |
 | macOS | `GTK4_PLUGIN_DYLIB=… tools/package-macos.sh` | macOS |
 
 Os pacotes de Windows e macOS levam o GTK4 e o GStreamer **dentro** (a pasta tem
